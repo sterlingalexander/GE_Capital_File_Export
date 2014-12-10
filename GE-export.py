@@ -23,25 +23,37 @@ cfg = ConfigParser.ConfigParser()
 cfg.read('config.ini')
 
 #==========| Configuration strings |==========
-db_latitude_ip = cfg.get("Database", "db_latitude_ip")
-db_latitude_name = cfg.get("Database", "db_latitude_name")
-db_latitude_UID = cfg.get("Database", "db_latitude_UID")
-db_latitude_pwd = cfg.get("Database", "db_latitude_pwd")
-db_commerce_center_ip = cfg.get("Database", "db_commerce_center_ip")
-db_commerce_center_name = cfg.get("Database", "db_commerce_center_name")
-db_commerce_center_UID = cfg.get("Database", "db_commerce_center_UID")
-db_commerce_center_pwd = cfg.get("Database", "db_commerce_center_pwd")
-ge_account_number = cfg.get("CompanyInfo", "ge_account_number")
-output_file_name = cfg.get("OutputPaths", "output_file_base") + "-" + query_date + ".txt"
-company_name = cfg.get("CompanyInfo", "company_name")
-cust_id = cfg.get("CompanyInfo", "cust_id")
-archive_path = cfg.get("OutputPaths", "archive_path")
-ftp_log_path = cfg.get("OutputPaths", "ftp_log_path")
-temp_path = cfg.get("OutputPaths", "temp_path")
-ftp_username = cfg.get("FTP", "ftp_username")
-ftp_password = cfg.get("FTP", "ftp_password")
-ftp_url = cfg.get("FTP", "ftp_url")
-excluded_product_groups = cfg.get("Exclusions", "product_groups").split(" ")
+try:
+    db_latitude_ip = cfg.get("Database", "db_latitude_ip")
+    db_latitude_name = cfg.get("Database", "db_latitude_name")
+    db_latitude_UID = cfg.get("Database", "db_latitude_UID")
+    db_latitude_pwd = cfg.get("Database", "db_latitude_pwd")
+    db_commerce_center_ip = cfg.get("Database", "db_commerce_center_ip")
+    db_commerce_center_name = cfg.get("Database", "db_commerce_center_name")
+    db_commerce_center_UID = cfg.get("Database", "db_commerce_center_UID")
+    db_commerce_center_pwd = cfg.get("Database", "db_commerce_center_pwd")
+    ge_account_number = cfg.get("CompanyInfo", "ge_account_number")
+    output_file_name = cfg.get("OutputPaths", "output_file_base") + "-" + query_date + ".txt"
+    company_name = cfg.get("CompanyInfo", "company_name")
+    cust_id = cfg.get("CompanyInfo", "cust_id")
+    archive_path = cfg.get("OutputPaths", "archive_path")
+    ftp_log_path = cfg.get("OutputPaths", "ftp_log_path")
+    temp_path = cfg.get("OutputPaths", "temp_path")
+    ftp_username = cfg.get("FTP", "ftp_username")
+    ftp_password = cfg.get("FTP", "ftp_password")
+    ftp_url = cfg.get("FTP", "ftp_url")
+    excluded_product_groups = cfg.get("Exclusions", "product_groups").split(" ")
+except:
+    print "\n==========| Exception raised!!!! |=========="
+    print "\tThere was an error parsing the configuration file."
+    print "\tThis normally occurs when a section is missing"
+    print "\tPlease ensure all sections and options are present, options may be left blank.  For example:"
+    print "\t\t[Exclusions]"
+    print "\t\tproduct_groups : "
+    print "\n\tPlease see the README file for further details."
+    print "==========| End exception report |=========="
+    exit(1)
+
 #==========| Configuration strings |==========
 
 if DEBUG:
