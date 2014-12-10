@@ -119,14 +119,22 @@ query1 = '''
                 INNER JOIN CommerceCenter.dbo.order_floor_plan_xref_10002 appr ON appr.oe_hdr_uid = oehdr.oe_hdr_uid
                 INNER JOIN CommerceCenter.dbo.floor_plan_10002 trueterms ON appr.floor_plan_uid = trueterms.floor_plan_uid
                 INNER JOIN CommerceCenter.dbo.address mail_to ON ihead.sold_to_customer_id = mail_to.id
-                INNER JOIN CommerceCenter.dbo.oe_pick_ticket oept ON oept.invoice_no = ihead.invoice_no
-
+                INNER JOIN CommerceCenter.dbo.oe_pick_ticket oept ON oept.invoice_no = ihead.invoice_no '''
+if len(excluded_product_groups) > 0:
+    query1 += '''
+    inner join CommerceCenter.dbo.inv_mast invm on invm.inv_mast_uid = iline.inv_mast_uid
+    inner join CommerceCenter.dbo.inv_loc invl on invl.inv_mast_uid = invm.inv_mast_uid
+    '''
+query1 += '''
                 WHERE
                   ihead.customer_id = ''' + "'" + ge_account_number + "'" + '''
                   AND SO.DocumentType = 'SO'
                   AND iline.inv_mast_uid IS NOT NULL
                   AND CONVERT(varchar,ihead.invoice_date,112) = ''' + "'" + query_date + "'" + '''
-                  AND CONVERT(varchar,oept.ship_date,112) = ''' + "'" + query_date + "'" + '''
+                  AND CONVERT(varchar,oept.ship_date,112) = ''' + "'" + query_date + "'"
+if len(excluded_product_groups) > 0:
+    query1 += " AND invl.product_group_id not in (" + str(excluded_product_groups).strip('[]') + ")"
+query1 += '''
                   ORDER BY ihead.invoice_no asc  '''
 
 cursor = cnxn.cursor()
@@ -186,8 +194,13 @@ query2 = '''
                 INNER JOIN CommerceCenter.dbo.oe_pick_ticket oept ON oept.order_no = ihead.order_no
                 INNER JOIN CommerceCenter.dbo.oe_pick_ticket_detail oeptd ON oept.pick_ticket_no = oeptd.pick_ticket_no
                 inner join CommerceCenter.dbo.document_line_serial dls on dls.document_no = oept.pick_ticket_no
-                    and dls.line_no = iline.line_no
-
+                    and dls.line_no = iline.line_no '''
+if len(excluded_product_groups) > 0:
+    query2 += '''
+    inner join CommerceCenter.dbo.inv_mast invm on invm.inv_mast_uid = iline.inv_mast_uid
+    inner join CommerceCenter.dbo.inv_loc invl on invl.inv_mast_uid = invm.inv_mast_uid
+    '''
+query2 += '''
                 WHERE
                   ihead.customer_id = ''' + "'" + ge_account_number + "'" + '''
                   AND iline.qty_shipped > 0
@@ -201,8 +214,13 @@ query2 = '''
                             AND CONVERT(varchar,oept.ship_date,112) =  ''' + "'" + query_date + "'" + '''
                             AND ihead.customer_id = ''' + "'" + ge_account_number + "'" + '''
                         )
+          '''
+if len(excluded_product_groups) > 0:
+    query2 += " AND invl.product_group_id not in (" + str(excluded_product_groups).strip('[]') + ")"
+query2 += '''
                   ORDER BY ihead.invoice_no asc
                     '''
+
 cursor_non_latitude = cnxn2.cursor()
 cursor_non_latitude.execute(query2)
 
@@ -256,10 +274,17 @@ query3 = '''
                 INNER JOIN CommerceCenter.dbo.address mail_to ON ihead.ship_to_id = mail_to.id
                 INNER JOIN CommerceCenter.dbo.order_floor_plan_xref_10002 appr ON appr.oe_hdr_uid = oehdr.oe_hdr_uid
                 INNER JOIN CommerceCenter.dbo.floor_plan_10002 trueterms ON appr.floor_plan_uid = trueterms.floor_plan_uid
-                INNER JOIN CommerceCenter.dbo.oe_pick_ticket oept ON oept.order_no = ihead.order_no
-
+                INNER JOIN CommerceCenter.dbo.oe_pick_ticket oept ON oept.order_no = ihead.order_no'''
+if len(excluded_product_groups) > 0:
+    query3 += '''
+    inner join inv_mast invm on invm.inv_mast_uid = iline.inv_mast_uid
+    inner join inv_loc invl on invl.inv_mast_uid = invm.inv_mast_uid
+    '''
+query3 += '''
             where CONVERT(varchar,rma_hdr.date_created,112) = ''' + "'" + query_date + "'" + '''
                 AND ihead.customer_id = ''' + "'" + ge_account_number + "'"
+if len(excluded_product_groups) > 0:
+    query3 += " AND invl.product_group_id not in (" + str(excluded_product_groups).strip('[]') + ")"
 
 cursor_rma = cnxn3.cursor()
 cursor_rma.execute(query3)
