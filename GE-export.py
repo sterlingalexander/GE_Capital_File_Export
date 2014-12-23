@@ -244,7 +244,7 @@ cursor_non_latitude.execute(query2)
 cnxn3 = pyodbc.connect('DRIVER={SQL Server};SERVER=' + db_commerce_center_ip + ';DATABASE=' + db_commerce_center_name +
                        ';UID=' + db_commerce_center_UID + ';PWD=' + db_commerce_center_pwd)
 query3 = '''
-            select oehdr.customer_id 'Dealer',
+            select distinct oehdr.customer_id 'Dealer',
                         '1' as is_rma,
                         LTRIM(RTRIM(dls.serial_number)) as SerialNumberID,
                         dls.document_line_serial_uid,
@@ -511,7 +511,7 @@ rma_rows = cursor_rma.fetchall()
 non_latitude_rows = cursor_non_latitude.fetchall()
 rma_non_serial = cursor_rma_non_serial.fetchall()
 
-if DEBUG == 1:
+if DEBUG >= 1:
     print str_batch_header
     print "RMA cursor length ====>                " + str(len(rma_rows))
     print "RMA without serial cursor length ====> " + str(len(rma_non_serial))
