@@ -43,6 +43,7 @@ try:
     ftp_password = cfg.get("FTP", "ftp_password")
     ftp_url = cfg.get("FTP", "ftp_url")
     excluded_product_groups = cfg.get("Exclusions", "product_groups").split(" ")
+    win_scp_path = cfg.get("General", "win_scp_path")
 except:
     print "\n==========| Exception raised!!!! |=========="
     print "\tThere was an error parsing the configuration file."
@@ -74,6 +75,7 @@ if DEBUG:
     print "FTP Log Path:\t\t\t\t", ftp_log_path
     print "Temp file path:\t\t\t\t", temp_path
     print "Excluded product groups:\t", excluded_product_groups
+    print "WinSCP Path:\t\t\t\t", win_scp_path
 
 print "Running queries...."
 
@@ -647,7 +649,7 @@ shutil.copy2(output_file_name, temp_path)
 
 # Replace forward slashes with back slashes for command line commands
 print "Starting file transfer...."
-transfer_cmd = 'C:/Program Files (x86)/WinSCP/WinSCP.exe /script=WinSCP-commands.cmd ' + \
+transfer_cmd = win_scp_path + ' /script=WinSCP-commands.cmd ' + \
     ' /xmllog=' + ftp_log_path.replace('/', '\\') + '\!Y-!M-!D-!T-log.xml /log=' + ftp_log_path.replace('/', '\\') + \
     '\!Y-!M-!D-!T-log.txt' + ' /parameter ' + output_file_name + ' ' + temp_path + ' ' + ftp_username + ' ' + \
     ftp_password + ' ' + ftp_url
