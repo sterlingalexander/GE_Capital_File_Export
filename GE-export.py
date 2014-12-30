@@ -622,6 +622,7 @@ if not activity:
     print "No activity in file, skipping file transfer...."
     print "Archiving activity file..."
     shutil.copy2(output_file_name, archive_path)
+    os.remove(output_file_name)
     print "Archive complete....exiting."
     exit(0)
 else:
