@@ -328,7 +328,7 @@ query4 = '''
     where CONVERT(varchar,rma_hdr.date_created,112) = ''' + "'" + query_date + "'" + '''
         AND ihead.customer_id = ''' + "'" + ge_account_number + "'" + '''
 )
-select x.*,
+select DISTINCT x.*,
         oehdr.customer_id 'Dealer',
         '1' as is_rma,
         'Null-Serial' as SerialNumberID,
