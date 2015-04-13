@@ -207,6 +207,7 @@ query2 = '''
                 INNER JOIN CommerceCenter.dbo.address mail_to ON ihead.sold_to_customer_id = mail_to.id
                 INNER JOIN CommerceCenter.dbo.oe_pick_ticket oept ON oept.order_no = ihead.order_no
                 INNER JOIN CommerceCenter.dbo.oe_pick_ticket_detail oeptd ON oept.pick_ticket_no = oeptd.pick_ticket_no
+                    and CONVERT(varchar,oeptd.date_created,112) >= ''' + "'" + query_date + "'" + '''
                 inner join CommerceCenter.dbo.document_line_serial dls on dls.document_no = oept.pick_ticket_no
                     and dls.line_no = iline.line_no '''
 if len(excluded_product_groups) > 0:
