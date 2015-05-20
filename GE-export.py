@@ -224,10 +224,12 @@ query2 += '''
                   AND ihead.invoice_no NOT IN (
                         select InvoiceNumber from SalesOrder SO
                             INNER JOIN CommerceCenter.dbo.invoice_hdr ihead ON ihead.invoice_no = SO.InvoiceNumber
+                            INNER JOIN SalesOrderLine SOL on SO.SalesOrderId = SOL.SalesOrderID
                             INNER JOIN CommerceCenter.dbo.oe_pick_ticket oept ON oept.order_no = ihead.order_no
                         where CONVERT(varchar,ihead.invoice_date,112) =  ''' + "'" + query_date + "'" + '''
                             AND CONVERT(varchar,oept.ship_date,112) =  ''' + "'" + query_date + "'" + '''
                             AND ihead.customer_id = ''' + "'" + ge_account_number + "'" + '''
+                            AND (SOL.LineStatus != '' AND SO.OrderStatus = 'T')
                         )
           '''
 if len(excluded_product_groups) > 0:
