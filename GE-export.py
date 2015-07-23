@@ -307,30 +307,6 @@ if len(excluded_product_groups) > 0:
 cursor_rma = cnxn3.cursor()
 cursor_rma.execute(query3)
 
-#print "==========| Query 1  |=========="
-#print query1
-#print "==========| Query 3  |=========="
-#print query3
-#print "==========| Cut here |=========="
-
-#### DEBUG WITH TRACE TO SEE WHAT IS GETTING SENT BACK FROM THE QUERY
-#for row in cursor.fetchall():
-#    print row
-#print "=================================SALES ROWS====================="
-
-#print cursor.description
-#print cursor_rma.description
-
-#next = True
-#while next == True:
-#    for row in cursor_rma.fetchall():
-#        print row
-#    print "----------Mark--------"
-#    next = cursor_rma.nextset()
-#print "Rows should be above"
-
-#exit(1)
-
 # QUERY 4: RMA returns with no serial numbers
 #   Query includes all NON-SERIALIZED RMA returns that need to be credited
 
@@ -421,6 +397,23 @@ if DEBUG:
     print "====================| Query 4 |===================="
     print query4
 
+if DEBUG:
+	print cursor.description
+	print cursor_rma.description
+
+#for row in cursor.fetchall():
+#    print row
+#print "=================================SALES ROWS====================="
+
+#next = True
+#while next == True:
+#    for row in cursor_rma.fetchall():
+#        print row
+#    print "----------Mark--------"
+#    next = cursor_rma.nextset()
+#print "Rows should be above"
+#exit(1)
+	
 print "Queries complete, parsing and exporting data...."
 
 # BATCH HEADER DEFS
