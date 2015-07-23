@@ -59,11 +59,11 @@ except:
 
 if DEBUG:
     print cfg.sections()
-    print "Latitude DB server IP:\t\t\t\t", db_latitude_ip
+    print "Latitude DB server IP:\t\t\t", db_latitude_ip
     print "Latitude DB name:\t\t\t", db_latitude_name
     print "Latitude DB UID:\t\t\t", db_latitude_UID
     print "Latitude DB pwd:\t\t\t", db_latitude_pwd
-    print "P21 DB server IP:\t\t\t\t", db_commerce_center_ip
+    print "P21 DB server IP:\t\t\t", db_commerce_center_ip
     print "Commerce Center DB name:\t", db_commerce_center_name
     print "Commerce Center DB UID:\t\t", db_commerce_center_UID
     print "Commerce Center DB pwd:\t\t", db_commerce_center_pwd
@@ -83,61 +83,62 @@ print "Running queries...."
 # QUERY 1: All sales that are shipped through Latitute
 #   Query includes Latitude database to ensure that if the Latitiude Gateway goes down we don't miss
 #     information not yet propagated to CommerceCenter
+#    * 07-22-2015 - Join on item_id instead of line_number to avoid P21/Latitude item mismatches
 
 cnxn = pyodbc.connect('DRIVER={SQL Server};SERVER=' + db_latitude_ip + ';DATABASE=' + db_latitude_name + ';UID=' +
                       db_latitude_UID + ';PWD=' + db_latitude_pwd)
 query1 = '''
-                SELECT DISTINCT
-                  NULL as is_rma,
-                  ihead.invoice_no,
-                  ihead.order_no,
-                  oept.pick_ticket_no,
-                  ihead.carrier_name,
-                  SOS.TrackingNumber 'tracking_no',
-                  appr.floor_plan_approval_number AS 'Appr_No',
-                  ihead.total_amount AS 'Inv_Total',
-                  SO.CustomerID AS Dealer,
-                  CONVERT(varchar,ihead.invoice_date,112) AS 'Inv_Date',
-                  CONVERT(varchar,ihead.net_due_date,112) AS 'Due_Date',
-                  ihead.terms_id AS Terms,
-                  trueterms.floor_plan_id,
-                  trueterms.floor_plan_desc,
-                  ihead.po_no AS Po_num,
-                  iline.product_group_id AS Prod,
-                  iline.item_desc,
-                  SOL.ItemID,
-                  SOL.PickQuantity AS Qty,
-                  iline.unit_price AS Price,
-                  COALESCE(SN.SerialNumberID,'') AS SerialNumberID,
-                  SOL.LineNumber AS Ln,
-                  SO.BillToName as bill_to,
-                  ihead.ship2_address1 as ship_addr1,
-                  ihead.ship2_address2 AS ship_addr2,
-                  ihead.ship2_city AS ship_city,
-                  ihead.ship2_state AS ship_state,
-                  ihead.ship2_postal_code AS ship_zip,
-                  mail_to.name mail_name,
-                  mail_to.mail_address1 mail_addr1,
-                  mail_to.mail_address2 mail_addr2,
-                  mail_to.mail_city mail_city,
-                  mail_to.mail_state mail_state,
-                  mail_to.mail_postal_code mail_zip
+    SELECT DISTINCT
+      NULL as is_rma,
+      ihead.invoice_no,
+      ihead.order_no,
+      oept.pick_ticket_no,
+      ihead.carrier_name,
+      SOS.TrackingNumber 'tracking_no',
+      appr.floor_plan_approval_number AS 'Appr_No',
+      ihead.total_amount AS 'Inv_Total',
+      SO.CustomerID AS Dealer,
+      CONVERT(varchar,ihead.invoice_date,112) AS 'Inv_Date',
+      CONVERT(varchar,ihead.net_due_date,112) AS 'Due_Date',
+      ihead.terms_id AS Terms,
+      trueterms.floor_plan_id,
+      trueterms.floor_plan_desc,
+      ihead.po_no AS Po_num,
+      iline.product_group_id AS Prod,
+      iline.item_desc,
+      SOL.ItemID,
+      SOL.PickQuantity AS Qty,
+      iline.unit_price AS Price,
+      COALESCE(SN.SerialNumberID,'') AS SerialNumberID,
+      SOL.LineNumber AS Ln,
+      SO.BillToName as bill_to,
+      ihead.ship2_address1 as ship_addr1,
+      ihead.ship2_address2 AS ship_addr2,
+      ihead.ship2_city AS ship_city,
+      ihead.ship2_state AS ship_state,
+      ihead.ship2_postal_code AS ship_zip,
+      mail_to.name mail_name,
+      mail_to.mail_address1 mail_addr1,
+      mail_to.mail_address2 mail_addr2,
+      mail_to.mail_city mail_city,
+      mail_to.mail_state mail_state,
+      mail_to.mail_postal_code mail_zip
 
-                FROM SalesOrder SO
-                INNER JOIN SalesOrderLine SOL ON SOL.SalesOrderID = SO.SalesOrderID
-                LEFT JOIN SalesOrderSerialNumber SN ON SN.SalesOrderID = SOL.SalesOrderID AND SN.LineNumber = SOL.LineNumber
-                INNER JOIN SalesOrderShip SOS on SOS.SalesOrderID = SO.SalesOrderId AND SOS.BoxNumber = '1'
-                INNER JOIN CommerceCenter.dbo.invoice_hdr ihead ON ihead.invoice_no = SO.InvoiceNumber
-                INNER JOIN CommerceCenter.dbo.invoice_line iline ON iline.invoice_no = ihead.invoice_no AND iline.line_no = SOL.LineNumber
-                INNER JOIN CommerceCenter.dbo.oe_hdr oehdr ON oehdr.order_no = ihead.order_no
-                INNER JOIN CommerceCenter.dbo.order_floor_plan_xref_10002 appr ON appr.oe_hdr_uid = oehdr.oe_hdr_uid
-                INNER JOIN CommerceCenter.dbo.floor_plan_10002 trueterms ON appr.floor_plan_uid = trueterms.floor_plan_uid
-                INNER JOIN CommerceCenter.dbo.address mail_to ON ihead.sold_to_customer_id = mail_to.id
-                INNER JOIN CommerceCenter.dbo.oe_pick_ticket oept ON oept.invoice_no = ihead.invoice_no '''
+    FROM SalesOrder SO
+    INNER JOIN SalesOrderLine SOL ON SOL.SalesOrderID = SO.SalesOrderID
+    LEFT JOIN SalesOrderSerialNumber SN ON SN.SalesOrderID = SOL.SalesOrderID AND SN.LineNumber = SOL.LineNumber
+    INNER JOIN SalesOrderShip SOS on SOS.SalesOrderID = SO.SalesOrderId AND SOS.BoxNumber = '1'
+    INNER JOIN ''' + db_commerce_center_name + '''.dbo.invoice_hdr ihead ON ihead.invoice_no = SO.InvoiceNumber
+    INNER JOIN ''' + db_commerce_center_name + '''.dbo.invoice_line iline ON iline.invoice_no = ihead.invoice_no AND iline.item_id = SOL.itemID --iline.line_no = SOL.LineNumber
+    INNER JOIN ''' + db_commerce_center_name + '''.dbo.oe_hdr oehdr ON oehdr.order_no = ihead.order_no
+    INNER JOIN ''' + db_commerce_center_name + '''.dbo.order_floor_plan_xref_10002 appr ON appr.oe_hdr_uid = oehdr.oe_hdr_uid
+    INNER JOIN ''' + db_commerce_center_name + '''.dbo.floor_plan_10002 trueterms ON appr.floor_plan_uid = trueterms.floor_plan_uid
+    INNER JOIN ''' + db_commerce_center_name + '''.dbo.address mail_to ON ihead.sold_to_customer_id = mail_to.id
+    INNER JOIN ''' + db_commerce_center_name + '''.dbo.oe_pick_ticket oept ON oept.invoice_no = ihead.invoice_no '''
 if len(excluded_product_groups) > 0:
     query1 += '''
-    inner join CommerceCenter.dbo.inv_mast invm on invm.inv_mast_uid = iline.inv_mast_uid
-    inner join CommerceCenter.dbo.inv_loc invl on invl.inv_mast_uid = invm.inv_mast_uid
+    inner join ''' + db_commerce_center_name + '''.dbo.inv_mast invm on invm.inv_mast_uid = iline.inv_mast_uid
+    inner join ''' + db_commerce_center_name + '''.dbo.inv_loc invl on invl.inv_mast_uid = invm.inv_mast_uid
     '''
 query1 += '''
                 WHERE
@@ -162,76 +163,76 @@ cursor.execute(query1)
 cnxn2 = pyodbc.connect('DRIVER={SQL Server};SERVER=' + db_latitude_ip + ';DATABASE=' + db_latitude_name + ';UID=' +
                       db_latitude_UID + ';PWD=' + db_latitude_pwd)
 query2 = '''
-                SELECT DISTINCT
-                  NULL as is_rma,
-                  'Transfer_or_DirectShip' as 'tracking_no',
-                  ihead.invoice_no,
-                  ihead.order_no,
-                  oept.pick_ticket_no,
-                  LTRIM(RTRIM(dls.serial_number)) as SerialNumberID,
-                  dls.document_line_serial_uid,
-                  dls.row_status,
-                  ihead.carrier_name,
-                  appr.floor_plan_approval_number AS 'Appr_No',
-                  ihead.total_amount AS 'Inv_Total',
-                  oehdr.customer_id AS Dealer,
-                  CONVERT(varchar,ihead.invoice_date,112) AS 'Inv_Date',
-                  CONVERT(varchar,ihead.net_due_date,112) AS 'Due_Date',
-                  ihead.terms_id AS Terms,
-                  trueterms.floor_plan_id,
-                  trueterms.floor_plan_desc,
-                  ihead.po_no AS Po_num,
-                  iline.product_group_id AS Prod,
-                  iline.item_desc,
-                  iline.item_id ItemID,
-                  iline.qty_shipped Qty,
-                  iline.unit_price AS Price,
-                  oehdr.ship2_name bill_to,
-                  ihead.ship2_address1 as ship_addr1,
-                  ihead.ship2_address2 AS ship_addr2,
-                  ihead.ship2_city AS ship_city,
-                  ihead.ship2_state AS ship_state,
-                  ihead.ship2_postal_code AS ship_zip,
-                  mail_to.name mail_name,
-                  mail_to.mail_address1 mail_addr1,
-                  mail_to.mail_address2 mail_addr2,
-                  mail_to.mail_city mail_city,
-                  mail_to.mail_state mail_state,
-                  mail_to.mail_postal_code mail_zip
+    SELECT DISTINCT
+      NULL as is_rma,
+      'Transfer_or_DirectShip' as 'tracking_no',
+      ihead.invoice_no,
+      ihead.order_no,
+      oept.pick_ticket_no,
+      LTRIM(RTRIM(dls.serial_number)) as SerialNumberID,
+      dls.document_line_serial_uid,
+      dls.row_status,
+      ihead.carrier_name,
+      appr.floor_plan_approval_number AS 'Appr_No',
+      ihead.total_amount AS 'Inv_Total',
+      oehdr.customer_id AS Dealer,
+      CONVERT(varchar,ihead.invoice_date,112) AS 'Inv_Date',
+      CONVERT(varchar,ihead.net_due_date,112) AS 'Due_Date',
+      ihead.terms_id AS Terms,
+      trueterms.floor_plan_id,
+      trueterms.floor_plan_desc,
+      ihead.po_no AS Po_num,
+      iline.product_group_id AS Prod,
+      iline.item_desc,
+      iline.item_id ItemID,
+      iline.qty_shipped Qty,
+      iline.unit_price AS Price,
+      oehdr.ship2_name bill_to,
+      ihead.ship2_address1 as ship_addr1,
+      ihead.ship2_address2 AS ship_addr2,
+      ihead.ship2_city AS ship_city,
+      ihead.ship2_state AS ship_state,
+      ihead.ship2_postal_code AS ship_zip,
+      mail_to.name mail_name,
+      mail_to.mail_address1 mail_addr1,
+      mail_to.mail_address2 mail_addr2,
+      mail_to.mail_city mail_city,
+      mail_to.mail_state mail_state,
+      mail_to.mail_postal_code mail_zip
 
-                FROM CommerceCenter.dbo.invoice_hdr ihead
-                INNER JOIN CommerceCenter.dbo.invoice_line iline ON iline.invoice_no = ihead.invoice_no
-                INNER JOIN CommerceCenter.dbo.oe_hdr oehdr ON oehdr.order_no = ihead.order_no
-                INNER JOIN CommerceCenter.dbo.order_floor_plan_xref_10002 appr ON appr.oe_hdr_uid = oehdr.oe_hdr_uid
-                INNER JOIN CommerceCenter.dbo.floor_plan_10002 trueterms ON appr.floor_plan_uid = trueterms.floor_plan_uid
-                INNER JOIN CommerceCenter.dbo.address mail_to ON ihead.sold_to_customer_id = mail_to.id
-                INNER JOIN CommerceCenter.dbo.oe_pick_ticket oept ON oept.order_no = ihead.order_no
-                INNER JOIN CommerceCenter.dbo.oe_pick_ticket_detail oeptd ON oept.pick_ticket_no = oeptd.pick_ticket_no
-                    and CONVERT(varchar,oeptd.date_created,112) >= ''' + "'" + query_date + "'" + '''
-                inner join CommerceCenter.dbo.document_line_serial dls on dls.document_no = oept.pick_ticket_no
-                    and dls.line_no = iline.line_no '''
+    FROM ''' + db_commerce_center_name + '''.dbo.invoice_hdr ihead
+    INNER JOIN ''' + db_commerce_center_name + '''.dbo.invoice_line iline ON iline.invoice_no = ihead.invoice_no
+    INNER JOIN ''' + db_commerce_center_name + '''.dbo.oe_hdr oehdr ON oehdr.order_no = ihead.order_no
+    INNER JOIN ''' + db_commerce_center_name + '''.dbo.order_floor_plan_xref_10002 appr ON appr.oe_hdr_uid = oehdr.oe_hdr_uid
+    INNER JOIN ''' + db_commerce_center_name + '''.dbo.floor_plan_10002 trueterms ON appr.floor_plan_uid = trueterms.floor_plan_uid
+    INNER JOIN ''' + db_commerce_center_name + '''.dbo.address mail_to ON ihead.sold_to_customer_id = mail_to.id
+    INNER JOIN ''' + db_commerce_center_name + '''.dbo.oe_pick_ticket oept ON oept.order_no = ihead.order_no
+    INNER JOIN ''' + db_commerce_center_name + '''.dbo.oe_pick_ticket_detail oeptd ON oept.pick_ticket_no = oeptd.pick_ticket_no
+        and CONVERT(varchar,oeptd.date_created,112) >= ''' + "'" + query_date + "'" + '''
+    inner join ''' + db_commerce_center_name + '''.dbo.document_line_serial dls on dls.document_no = oept.pick_ticket_no
+        and dls.line_no = iline.line_no '''
 if len(excluded_product_groups) > 0:
     query2 += '''
-    inner join CommerceCenter.dbo.inv_mast invm on invm.inv_mast_uid = iline.inv_mast_uid
-    inner join CommerceCenter.dbo.inv_loc invl on invl.inv_mast_uid = invm.inv_mast_uid
+    inner join ''' + db_commerce_center_name + '''.dbo.inv_mast invm on invm.inv_mast_uid = iline.inv_mast_uid
+    inner join ''' + db_commerce_center_name + '''.dbo.inv_loc invl on invl.inv_mast_uid = invm.inv_mast_uid
     '''
 query2 += '''
-                WHERE
-                  ihead.customer_id = ''' + "'" + ge_account_number + "'" + '''
-                  AND iline.qty_shipped > 0
-                  AND iline.inv_mast_uid IS NOT NULL
-                  AND CONVERT(varchar,ihead.invoice_date,112) = ''' + "'" + query_date + "'" + '''
-                  AND ihead.invoice_no NOT IN (
-                        select InvoiceNumber from SalesOrder SO
-                            INNER JOIN CommerceCenter.dbo.invoice_hdr ihead ON ihead.invoice_no = SO.InvoiceNumber
-                            INNER JOIN SalesOrderLine SOL on SO.SalesOrderId = SOL.SalesOrderID
-                            INNER JOIN CommerceCenter.dbo.oe_pick_ticket oept ON oept.order_no = ihead.order_no
-                        where CONVERT(varchar,ihead.invoice_date,112) =  ''' + "'" + query_date + "'" + '''
-                            AND CONVERT(varchar,oept.ship_date,112) =  ''' + "'" + query_date + "'" + '''
-                            AND ihead.customer_id = ''' + "'" + ge_account_number + "'" + '''
-                            AND (SOL.LineStatus != '' AND SO.OrderStatus = 'T')
-                        )
-          '''
+    WHERE
+      ihead.customer_id = ''' + "'" + ge_account_number + "'" + '''
+      AND iline.qty_shipped > 0
+      AND iline.inv_mast_uid IS NOT NULL
+      AND CONVERT(varchar,ihead.invoice_date,112) = ''' + "'" + query_date + "'" + '''
+      AND ihead.invoice_no NOT IN (
+            select InvoiceNumber from SalesOrder SO
+                INNER JOIN ''' + db_commerce_center_name + '''.dbo.invoice_hdr ihead ON ihead.invoice_no = SO.InvoiceNumber
+                INNER JOIN SalesOrderLine SOL on SO.SalesOrderId = SOL.SalesOrderID
+                INNER JOIN ''' + db_commerce_center_name + '''.dbo.oe_pick_ticket oept ON oept.order_no = ihead.order_no
+            where CONVERT(varchar,ihead.invoice_date,112) =  ''' + "'" + query_date + "'" + '''
+                AND CONVERT(varchar,oept.ship_date,112) =  ''' + "'" + query_date + "'" + '''
+                AND ihead.customer_id = ''' + "'" + ge_account_number + "'" + '''
+                AND (SOL.LineStatus != '' AND SO.OrderStatus = 'T')
+                )
+  '''
 if len(excluded_product_groups) > 0:
     query2 += " AND invl.product_group_id not in (" + str(excluded_product_groups).strip('[]') + ")"
 query2 += '''
@@ -285,13 +286,13 @@ query3 = '''
                 inner join oe_hdr oehdr on oehdr.oe_hdr_uid = rma_hdr.oe_hdr_uid
                 inner join document_line_serial dls on dls.document_no = rma_hdr.rma_receipt_hdr_uid
                     and dls.line_no = rma_line.receipt_line_no
-                inner join CommerceCenter.dbo.invoice_hdr ihead on oehdr.order_no = ihead.order_no
-                INNER JOIN CommerceCenter.dbo.invoice_line iline ON iline.invoice_no = ihead.invoice_no
+                inner join invoice_hdr ihead on oehdr.order_no = ihead.order_no
+                INNER JOIN invoice_line iline ON iline.invoice_no = ihead.invoice_no
                     and dls.line_no = iline.line_no
-                INNER JOIN CommerceCenter.dbo.address mail_to ON ihead.ship_to_id = mail_to.id
-                INNER JOIN CommerceCenter.dbo.order_floor_plan_xref_10002 appr ON appr.oe_hdr_uid = oehdr.oe_hdr_uid
-                INNER JOIN CommerceCenter.dbo.floor_plan_10002 trueterms ON appr.floor_plan_uid = trueterms.floor_plan_uid
-                INNER JOIN CommerceCenter.dbo.oe_pick_ticket oept ON oept.order_no = ihead.order_no'''
+                INNER JOIN address mail_to ON ihead.ship_to_id = mail_to.id
+                INNER JOIN order_floor_plan_xref_10002 appr ON appr.oe_hdr_uid = oehdr.oe_hdr_uid
+                INNER JOIN floor_plan_10002 trueterms ON appr.floor_plan_uid = trueterms.floor_plan_uid
+                INNER JOIN oe_pick_ticket oept ON oept.order_no = ihead.order_no'''
 if len(excluded_product_groups) > 0:
     query3 += '''
     inner join inv_mast invm on invm.inv_mast_uid = iline.inv_mast_uid
@@ -305,6 +306,30 @@ if len(excluded_product_groups) > 0:
 
 cursor_rma = cnxn3.cursor()
 cursor_rma.execute(query3)
+
+#print "==========| Query 1  |=========="
+#print query1
+#print "==========| Query 3  |=========="
+#print query3
+#print "==========| Cut here |=========="
+
+#### DEBUG WITH TRACE TO SEE WHAT IS GETTING SENT BACK FROM THE QUERY
+#for row in cursor.fetchall():
+#    print row
+#print "=================================SALES ROWS====================="
+
+#print cursor.description
+#print cursor_rma.description
+
+#next = True
+#while next == True:
+#    for row in cursor_rma.fetchall():
+#        print row
+#    print "----------Mark--------"
+#    next = cursor_rma.nextset()
+#print "Rows should be above"
+
+#exit(1)
 
 # QUERY 4: RMA returns with no serial numbers
 #   Query includes all NON-SERIALIZED RMA returns that need to be credited
@@ -325,7 +350,7 @@ query4 = '''
     from rma_receipt_hdr rma_hdr
         inner join rma_receipt_line rma_line on rma_hdr.rma_receipt_hdr_uid = rma_line.rma_receipt_hdr_uid
         inner join oe_hdr oehdr on oehdr.oe_hdr_uid = rma_hdr.oe_hdr_uid
-        inner join CommerceCenter.dbo.invoice_hdr ihead on oehdr.order_no = ihead.order_no
+        inner join invoice_hdr ihead on oehdr.order_no = ihead.order_no
         left outer join document_line_serial dls on dls.document_no = rma_hdr.rma_receipt_hdr_uid
             and dls.line_no = rma_line.receipt_line_no
     where CONVERT(varchar,rma_hdr.date_created,112) = ''' + "'" + query_date + "'" + '''
@@ -382,8 +407,19 @@ where x.serial_number is null
     '''
 if len(excluded_product_groups) > 0:
     query4 += " AND invl.product_group_id not in (" + str(excluded_product_groups).strip('[]') + ")"
+
 cursor_rma_non_serial = cnxn4.cursor()
 cursor_rma_non_serial.execute(query4)
+
+if DEBUG:
+    print "====================| Query 1 |===================="
+    print query1
+    print "====================| Query 2 |===================="
+    print query2
+    print "====================| Query 3 |===================="
+    print query3
+    print "====================| Query 4 |===================="
+    print query4
 
 print "Queries complete, parsing and exporting data...."
 
@@ -552,6 +588,7 @@ for row in rows:
             print "item price:", str(row.Price), "\tQuantity:", str(row.Qty), "\t\trunning batch total: ", str(batch_total), \
                 row.ItemID, row.item_desc
 
+
 # Non-Latitude sales
 #  - This query does not pull one line per item, so we need to use the quantity field when printing
 if len(non_latitude_rows) > 0:
@@ -642,7 +679,7 @@ else:
     if DEBUG == 1:
         print file_footer
     if DEBUG > 0:
-        print "Tnvoice Totals: ", invoice_total, "\t\tItem Totals: ", batch_total
+        print "Invoice Totals: ", invoice_total, "\t\tItem Totals: ", batch_total
 
 # Close the file so we can send it....
 output_file.close()
@@ -662,12 +699,12 @@ if subprocess.call(transfer_cmd):
     print "An error occurred during FTP transfer.  This was logged in " + ftp_log_path
     exit(-1)
 else:
-    print "Transfer successful...archiving activity file...."
-    shutil.copy2(output_file_name, archive_path)
-    os.remove(temp_path + '/' + output_file_name)
-    os.remove(output_file_name)
-    print "Archive complete....exiting."
-    exit(0)
+	print "Transfer successful...archiving activity file...."
+	shutil.copy2(output_file_name, archive_path)
+	os.remove(temp_path + '/' + output_file_name)
+	os.remove(output_file_name)
+	print "Archive complete....exiting."
+	exit(0)
 
 # pysftp code.  Unfortunately this does not work as it should.
 # Sending via sFTP fails on remote file open request, tabling this for now in favor of another solution
