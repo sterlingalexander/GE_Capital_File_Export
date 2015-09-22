@@ -84,45 +84,46 @@ print "Running queries...."
 #   Query includes Latitude database to ensure that if the Latitiude Gateway goes down we don't miss
 #     information not yet propagated to CommerceCenter
 #    * 07-22-2015 - Join on item_id instead of line_number to avoid P21/Latitude item mismatches
+#    * 09-22-2015 - Added exclusion to where clause for items with zero-dollar price
 
 cnxn = pyodbc.connect('DRIVER={SQL Server};SERVER=' + db_latitude_ip + ';DATABASE=' + db_latitude_name + ';UID=' +
                       db_latitude_UID + ';PWD=' + db_latitude_pwd)
 query1 = '''
     SELECT DISTINCT
       NULL as is_rma,
-      ihead.invoice_no,
-      ihead.order_no,
-      oept.pick_ticket_no,
-      ihead.carrier_name,
-      SOS.TrackingNumber 'tracking_no',
       appr.floor_plan_approval_number AS 'Appr_No',
-      ihead.total_amount AS 'Inv_Total',
-      SO.CustomerID AS Dealer,
+      ihead.carrier_name,
       CONVERT(varchar,ihead.invoice_date,112) AS 'Inv_Date',
       CONVERT(varchar,ihead.net_due_date,112) AS 'Due_Date',
-      ihead.terms_id AS Terms,
-      trueterms.floor_plan_id,
-      trueterms.floor_plan_desc,
+      ihead.invoice_no,
+      ihead.order_no,
       ihead.po_no AS Po_num,
-      iline.product_group_id AS Prod,
-      iline.item_desc,
-      SOL.ItemID,
-      SOL.PickQuantity AS Qty,
-      iline.unit_price AS Price,
-      COALESCE(SN.SerialNumberID,'') AS SerialNumberID,
-      SOL.LineNumber AS Ln,
-      SO.BillToName as bill_to,
       ihead.ship2_address1 as ship_addr1,
       ihead.ship2_address2 AS ship_addr2,
       ihead.ship2_city AS ship_city,
       ihead.ship2_state AS ship_state,
       ihead.ship2_postal_code AS ship_zip,
+      ihead.total_amount AS 'Inv_Total',
+      ihead.terms_id AS Terms,
+      iline.unit_price AS Price,
+      iline.product_group_id AS Prod,
+      iline.item_desc,
       mail_to.name mail_name,
       mail_to.mail_address1 mail_addr1,
       mail_to.mail_address2 mail_addr2,
       mail_to.mail_city mail_city,
       mail_to.mail_state mail_state,
-      mail_to.mail_postal_code mail_zip
+      mail_to.mail_postal_code mail_zip,
+      oept.pick_ticket_no,
+      trueterms.floor_plan_id,
+      trueterms.floor_plan_desc,
+      SO.CustomerID AS Dealer,
+      SO.BillToName as bill_to,
+      SOS.TrackingNumber 'tracking_no',
+      SOL.ItemID,
+      SOL.PickQuantity AS Qty,
+      SOL.LineNumber AS Ln,
+      COALESCE(SN.SerialNumberID,'') AS SerialNumberID
 
     FROM SalesOrder SO
     INNER JOIN SalesOrderLine SOL ON SOL.SalesOrderID = SO.SalesOrderID
@@ -145,6 +146,7 @@ query1 += '''
                   ihead.customer_id = ''' + "'" + ge_account_number + "'" + '''
                   AND SO.DocumentType = 'SO'
                   AND iline.inv_mast_uid IS NOT NULL
+                  AND iline.unit_price <> 0
                   AND CONVERT(varchar,ihead.invoice_date,112) = ''' + "'" + query_date + "'" + '''
                   AND CONVERT(varchar,oept.ship_date,112) = ''' + "'" + query_date + "'"
 if len(excluded_product_groups) > 0:
@@ -159,6 +161,7 @@ cursor.execute(query1)
 #   Query includes other sales such as Drop Ships and Front Counter sales
 #    * 11-19-2014:  Removed oept.ship_date from query where clause as direct ships can have different ship_to and
 #                       invoice dates
+#    * 09-22-2015 - Added exclusion to where clause for items with zero-dollar price
 
 cnxn2 = pyodbc.connect('DRIVER={SQL Server};SERVER=' + db_latitude_ip + ';DATABASE=' + db_latitude_name + ';UID=' +
                       db_latitude_UID + ';PWD=' + db_latitude_pwd)
@@ -221,6 +224,7 @@ query2 += '''
       ihead.customer_id = ''' + "'" + ge_account_number + "'" + '''
       AND iline.qty_shipped > 0
       AND iline.inv_mast_uid IS NOT NULL
+      AND iline.unit_price <> 0
       AND CONVERT(varchar,ihead.invoice_date,112) = ''' + "'" + query_date + "'" + '''
       AND ihead.invoice_no NOT IN (
             select InvoiceNumber from SalesOrder SO
@@ -244,6 +248,7 @@ cursor_non_latitude.execute(query2)
 
 # QUERY 3: RMA returns
 #   Query includes all SERIALIZED RMA returns that need to be credited
+#    * 09-22-2015 - Added exclusion to where clause for items with zero-dollar price
 
 cnxn3 = pyodbc.connect('DRIVER={SQL Server};SERVER=' + db_commerce_center_ip + ';DATABASE=' + db_commerce_center_name +
                        ';UID=' + db_commerce_center_UID + ';PWD=' + db_commerce_center_pwd)
@@ -300,6 +305,7 @@ if len(excluded_product_groups) > 0:
     '''
 query3 += '''
             where CONVERT(varchar,rma_hdr.date_created,112) = ''' + "'" + query_date + "'" + '''
+                AND iline.unit_price <> 0
                 AND ihead.customer_id = ''' + "'" + ge_account_number + "'"
 if len(excluded_product_groups) > 0:
     query3 += " AND invl.product_group_id not in (" + str(excluded_product_groups).strip('[]') + ")"
@@ -307,8 +313,10 @@ if len(excluded_product_groups) > 0:
 cursor_rma = cnxn3.cursor()
 cursor_rma.execute(query3)
 
+
 # QUERY 4: RMA returns with no serial numbers
 #   Query includes all NON-SERIALIZED RMA returns that need to be credited
+#    * 09-22-2015 - Added exclusion to where clause for items with zero-dollar price
 
 cnxn4 = pyodbc.connect('DRIVER={SQL Server};SERVER=' + db_commerce_center_ip + ';DATABASE=' + db_commerce_center_name +
                        ';UID=' + db_commerce_center_UID + ';PWD=' + db_commerce_center_pwd)
@@ -380,6 +388,7 @@ if len(excluded_product_groups) > 0:
     '''
 query4 += '''
 where x.serial_number is null
+    AND iline.unit_price <> 0
     '''
 if len(excluded_product_groups) > 0:
     query4 += " AND invl.product_group_id not in (" + str(excluded_product_groups).strip('[]') + ")"
@@ -397,23 +406,6 @@ if DEBUG:
     print "====================| Query 4 |===================="
     print query4
 
-if DEBUG:
-	print cursor.description
-	print cursor_rma.description
-
-#for row in cursor.fetchall():
-#    print row
-#print "=================================SALES ROWS====================="
-
-#next = True
-#while next == True:
-#    for row in cursor_rma.fetchall():
-#        print row
-#    print "----------Mark--------"
-#    next = cursor_rma.nextset()
-#print "Rows should be above"
-#exit(1)
-	
 print "Queries complete, parsing and exporting data...."
 
 # BATCH HEADER DEFS
@@ -425,10 +417,18 @@ output_file = open(output_file_name, "w")
 
 # Function Definitions
 
-def invoice_header(row):
+def invoice_header(row, other_charges):
+
+    if DEBUG and row.invoice_no in other_charges:
+        print row.invoice_no
+        print "%.2f" % (row.Inv_Total - other_charges[row.invoice_no])
+
     IH_Line = str(row.Dealer).ljust(13) + str(row.invoice_no).ljust(10) + "1".ljust(2) + str(row.Inv_Date)[4:] + \
-        str(row.Inv_Date)[2:4] + str(row.Appr_No)[:6].ljust(6) + \
-        str(row.Inv_Total)[:-2].translate(None, '.-').rjust(11, '0')
+        str(row.Inv_Date)[2:4] + str(row.Appr_No)[:6].ljust(6)
+    if row.invoice_no in other_charges:
+        IH_Line += str("%.2f" % (row.Inv_Total - other_charges[row.invoice_no])).translate(None, '.-').rjust(11, '0')
+    else:
+        IH_Line += str(row.Inv_Total)[:-2].translate(None, '.-').rjust(11, '0')
     if row.is_rma is not None:
         IH_Line += '-'
     else:
@@ -500,6 +500,7 @@ def address_info(row):
 def item_detail(row):
     # Return row total for file checksum
     # Invoice Detail Record
+
     ID1_Line = str(row.Dealer).ljust(13) + str(row.invoice_no).ljust(10) + "2".ljust(2)
     # Test for NULL serial numbers
     if row.SerialNumberID == None or row.SerialNumberID == "":
@@ -530,6 +531,85 @@ def item_detail(row):
 
     return row.Price
 
+# This function finds charges applied to the invoice as 'other charges', which show up in the total of the invoice
+#   however are actually additions/subtractions to the subtotal and NOT line items.  These totals need to be
+#   subtracted from the stored invoice_amount in order to have the line item totals and the invoice total to match.
+#
+def get_charges_to_exclude():
+
+    cnxn5 = pyodbc.connect('DRIVER={SQL Server};SERVER=' + db_commerce_center_ip + ';DATABASE=' + db_commerce_center_name +
+                           ';UID=' + db_commerce_center_UID + ';PWD=' + db_commerce_center_pwd)
+    cnxn6 = pyodbc.connect('DRIVER={SQL Server};SERVER=' + db_commerce_center_ip + ';DATABASE=' + db_commerce_center_name +
+                           ';UID=' + db_commerce_center_UID + ';PWD=' + db_commerce_center_pwd)
+
+    # Query to exclude any items that are of type 'other charge' on the invoice
+    query = '''
+           select iline.invoice_no,
+                iline.item_id,
+                iline.unit_price,
+                iline.qty_shipped,
+                ihead.total_amount
+        from
+                invoice_line as iline
+                INNER JOIN invoice_hdr as ihead
+                    on ihead.invoice_no = iline.invoice_no
+            WHERE CONVERT(varchar,ihead.invoice_date,112) = ''' + "'" + query_date + "'" + '''
+                 AND ihead.customer_id = ''' + "'" + ge_account_number + "'" + '''
+                 AND iline.other_charge_item = 'Y'
+        '''
+
+    query2 = '''
+            select ihead.invoice_no,
+                    ihead.total_amount,
+                    CONVERT(varchar,ihead.invoice_date,112) 'Invoice Date',
+                    oept.freight_out
+                from oe_pick_ticket oept
+                INNER JOIN invoice_hdr ihead
+                    ON oept.invoice_no = ihead.invoice_no
+                INNER JOIN freight_code as fc
+                    ON fc.freight_code_uid = oept.freight_code_uid
+                WHERE ihead.customer_id = ''' + "'" + ge_account_number + "'" + '''
+                AND CONVERT(varchar,ihead.invoice_date,112) = ''' + "'" + query_date + "'" + '''
+                AND fc.outgoing_freight = 'Y'
+                AND oept.freight_out > 0
+        '''
+
+    # cursor has other_charge items
+    cursor = cnxn5.cursor()
+    cursor2 = cnxn6.cursor()
+
+    # cursor2 handles latitude PPDADD freight
+    #  or any freight that is a charge on the invoice (check freight_code table)
+    cursor.execute(query)
+    cursor2.execute(query2)
+    other_charge_sum = {}
+
+    # Since we are using a dictionary, we must either add a new key or lookup the key and add to the invoice sum
+
+    if cursor.rowcount < 0:
+        print " ==> Adjusting for other_charge items detected on invoices"
+        for row in cursor:
+            if row.invoice_no in other_charge_sum:
+                other_charge_sum[row.invoice_no] += (row.unit_price * row.qty_shipped)
+            else:
+                other_charge_sum[row.invoice_no] = (row.unit_price * row.qty_shipped)
+    else:
+        print " --> No other_charge items affect subtotal"
+
+    # Do the same for PPDADD freight
+    if cursor2.rowcount < 0:
+        print " ==> Adjusting for PPDADD freight (or any other freight) that was detected on invoices"
+        for row in cursor2:
+            if row.invoice_no in other_charge_sum:
+                other_charge_sum[row.invoice_no] += row.freight_out
+            else:
+                other_charge_sum[row.invoice_no] = row.freight_out
+    else:
+        print " --> No Latitude shipping charges affect subtotal"
+
+    # Return the dictionary to the main program
+    return other_charge_sum
+
 # Main Program
 # Print BATCH HEADER RECORD
 
@@ -542,6 +622,7 @@ rows = cursor.fetchall()
 rma_rows = cursor_rma.fetchall()
 non_latitude_rows = cursor_non_latitude.fetchall()
 rma_non_serial = cursor_rma_non_serial.fetchall()
+other_charges = get_charges_to_exclude()
 
 if DEBUG >= 1:
     print str_batch_header
@@ -549,6 +630,7 @@ if DEBUG >= 1:
     print "RMA without serial cursor length ====> " + str(len(rma_non_serial))
     print "Sales cursor length ==>                " + str(len(rows))
     print "All Invoice cursor length ===>         " + str(len(non_latitude_rows))
+    print "Invoices with other charges ===>       " + str(len(other_charges.keys()))
 
 # Set counter/flag variables
 current = None              # current invoice flag
@@ -571,7 +653,7 @@ for row in rows:
             header_count += 1
             invoice_total += row.Inv_Total
             current = row.invoice_no
-            invoice_header(row)
+            invoice_header(row, other_charges)
             address_info(row)
             batch_total = batch_total + item_detail(row)
         else:
@@ -583,7 +665,7 @@ for row in rows:
 
 
 # Non-Latitude sales
-#  - This query does not pull one line per item, so we need to use the quantity field when printing
+#  - Since the query does not pull one line per item, we use the quantity field when printing
 if len(non_latitude_rows) > 0:
     for row in non_latitude_rows:
         # Check to see if we need a new invoice header record or if it is the same invoice
@@ -591,7 +673,7 @@ if len(non_latitude_rows) > 0:
             header_count += 1
             invoice_total += row.Inv_Total
             current = row.invoice_no
-            invoice_header(row)
+            invoice_header(row, other_charges)
             address_info(row)
             batch_total = batch_total + item_detail(row)
         else:
@@ -608,7 +690,7 @@ if len(rma_rows) > 0:
             header_count += 1
             invoice_total += row.Inv_Total
             current = row.invoice_no
-            invoice_header(row)
+            invoice_header(row, other_charges)
             address_info(row)
             batch_total = batch_total - item_detail(row)
         else:
@@ -618,7 +700,7 @@ if len(rma_rows) > 0:
                 str(batch_total), row.ItemID, row.item_desc
 
 # RMA non-serialized
-#  - This query does not pull one line per item, so we need to use the quantity field when printing
+#  - Since the query does not pull one line per item, we use the quantity field when printing
 
 if len(rma_non_serial) > 0:
     for row in rma_non_serial:
@@ -629,7 +711,7 @@ if len(rma_non_serial) > 0:
                 header_count += 1
                 invoice_total += row.Inv_Total
                 current = row.invoice_no
-                invoice_header(row)
+                invoice_header(row, other_charges)
                 address_info(row)
                 batch_total = batch_total - item_detail(row)
             else:
@@ -639,7 +721,7 @@ if len(rma_non_serial) > 0:
                 print "item price:", str(row.Price), "\tQuantity:", str(row.Qty), "\t\trunning batch total: ", \
                     str(batch_total), row.ItemID, row.item_desc
 
-# Did we actually have any activity to print?
+# Check to see if we have any activity to print, if not then we can log this and avoid a file transfer
 if len(rows) == 0 and len(rma_rows) == 0 and len(non_latitude_rows) == 0 and len(rma_non_serial) == 0:
     activity = False
 else:
@@ -692,12 +774,12 @@ if subprocess.call(transfer_cmd):
     print "An error occurred during FTP transfer.  This was logged in " + ftp_log_path
     exit(-1)
 else:
-	print "Transfer successful...archiving activity file...."
-	shutil.copy2(output_file_name, archive_path)
-	os.remove(temp_path + '/' + output_file_name)
-	os.remove(output_file_name)
-	print "Archive complete....exiting."
-	exit(0)
+    print "Transfer successful...archiving activity file...."
+    shutil.copy2(output_file_name, archive_path)
+    os.remove(temp_path + '/' + output_file_name)
+    os.remove(output_file_name)
+    print "Archive complete....exiting."
+    exit(0)
 
 # pysftp code.  Unfortunately this does not work as it should.
 # Sending via sFTP fails on remote file open request, tabling this for now in favor of another solution
