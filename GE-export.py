@@ -162,6 +162,7 @@ cursor.execute(query1)
 #    * 11-19-2014:  Removed oept.ship_date from query where clause as direct ships can have different ship_to and
 #                       invoice dates
 #    * 09-22-2015 - Added exclusion to where clause for items with zero-dollar price
+#    * 09-25-2015 - Adjusted document_line_serial join to account for re-ordered line numbers during substitutions
 
 cnxn2 = pyodbc.connect('DRIVER={SQL Server};SERVER=' + db_latitude_ip + ';DATABASE=' + db_latitude_name + ';UID=' +
                       db_latitude_UID + ';PWD=' + db_latitude_pwd)
@@ -213,7 +214,7 @@ query2 = '''
     INNER JOIN ''' + db_commerce_center_name + '''.dbo.oe_pick_ticket_detail oeptd ON oept.pick_ticket_no = oeptd.pick_ticket_no
         and CONVERT(varchar,oeptd.date_created,112) >= ''' + "'" + query_date + "'" + '''
     inner join ''' + db_commerce_center_name + '''.dbo.document_line_serial dls on dls.document_no = oept.pick_ticket_no
-        and dls.line_no = iline.line_no '''
+        and dls.line_no = oeptd.line_number and oeptd.oe_line_no = iline.oe_line_number '''
 if len(excluded_product_groups) > 0:
     query2 += '''
     inner join ''' + db_commerce_center_name + '''.dbo.inv_mast invm on invm.inv_mast_uid = iline.inv_mast_uid
@@ -541,10 +542,12 @@ def get_charges_to_exclude():
                            ';UID=' + db_commerce_center_UID + ';PWD=' + db_commerce_center_pwd)
     cnxn6 = pyodbc.connect('DRIVER={SQL Server};SERVER=' + db_commerce_center_ip + ';DATABASE=' + db_commerce_center_name +
                            ';UID=' + db_commerce_center_UID + ';PWD=' + db_commerce_center_pwd)
+    cnxn7 = pyodbc.connect('DRIVER={SQL Server};SERVER=' + db_commerce_center_ip + ';DATABASE=' + db_commerce_center_name +
+                           ';UID=' + db_commerce_center_UID + ';PWD=' + db_commerce_center_pwd)
 
     # Query to exclude any items that are of type 'other charge' on the invoice
     query = '''
-           select iline.invoice_no,
+           select DISTINCT iline.invoice_no,
                 iline.item_id,
                 iline.unit_price,
                 iline.qty_shipped,
@@ -552,10 +555,21 @@ def get_charges_to_exclude():
         from
                 invoice_line as iline
                 INNER JOIN invoice_hdr as ihead
-                    on ihead.invoice_no = iline.invoice_no
+                    on ihead.invoice_no = iline.invoice_no'''
+    if len(excluded_product_groups) > 0:
+        query += '''
+            inner join inv_mast invm on invm.inv_mast_uid = iline.inv_mast_uid
+            inner join inv_loc invl on invl.inv_mast_uid = invm.inv_mast_uid
+            '''
+        query += '''
             WHERE CONVERT(varchar,ihead.invoice_date,112) = ''' + "'" + query_date + "'" + '''
-                 AND ihead.customer_id = ''' + "'" + ge_account_number + "'" + '''
-                 AND iline.other_charge_item = 'Y'
+            AND ihead.customer_id = ''' + "'" + ge_account_number + "'"
+
+    if len(excluded_product_groups) > 0:
+        query += ''' AND (iline.other_charge_item = 'Y' OR
+                     invl.product_group_id in (''' + str(excluded_product_groups).strip('[]') + ") )"
+    else:
+        query += '''AND iline.other_charge_item = 'Y'
         '''
 
     query2 = '''
@@ -574,20 +588,39 @@ def get_charges_to_exclude():
                 AND oept.freight_out > 0
         '''
 
+    # Query to exclude tax from an invoice
+    query3 = '''
+    select DISTINCT ihead.invoice_no,
+                    ihead.tax_amount
+        from
+            invoice_hdr as ihead
+        WHERE CONVERT(varchar,ihead.invoice_date,112) = '20150925'
+            AND ihead.customer_id = '101411'
+            AND ihead.tax_amount <> 0
+    '''
+
+    if DEBUG:
+        print "Queries to pull other charges"
+        print query
+        print query2
+        print query3
+
     # cursor has other_charge items
     cursor = cnxn5.cursor()
     cursor2 = cnxn6.cursor()
+    cursor3 = cnxn7.cursor()
 
     # cursor2 handles latitude PPDADD freight
     #  or any freight that is a charge on the invoice (check freight_code table)
     cursor.execute(query)
     cursor2.execute(query2)
+    cursor3.execute(query3)
     other_charge_sum = {}
 
     # Since we are using a dictionary, we must either add a new key or lookup the key and add to the invoice sum
 
     if cursor.rowcount < 0:
-        print " ==> Adjusting for other_charge items detected on invoices"
+        print " ==> Adjusting for " + str(cursor.rowcount) + " other_charge detected on invoices"
         for row in cursor:
             if row.invoice_no in other_charge_sum:
                 other_charge_sum[row.invoice_no] += (row.unit_price * row.qty_shipped)
@@ -598,7 +631,7 @@ def get_charges_to_exclude():
 
     # Do the same for PPDADD freight
     if cursor2.rowcount < 0:
-        print " ==> Adjusting for PPDADD freight (or any other freight) that was detected on invoices"
+        print " ==> Adjusting for " + str(cursor2.rowcount) + " PPDADD freight (or any other freight) found on invoices"
         for row in cursor2:
             if row.invoice_no in other_charge_sum:
                 other_charge_sum[row.invoice_no] += row.freight_out
@@ -606,6 +639,21 @@ def get_charges_to_exclude():
                 other_charge_sum[row.invoice_no] = row.freight_out
     else:
         print " --> No Latitude shipping charges affect subtotal"
+
+    if cursor3.rowcount < 0:
+        print " ==> Adjusting for " + str(cursor3.rowcount) + " tax charges that were detected on invoices"
+        for row in cursor3:
+            if row.invoice_no in other_charge_sum:
+                other_charge_sum[row.invoice_no] += row.tax_amount
+            else:
+                other_charge_sum[row.invoice_no] = row.tax_amount
+    else:
+        print " --> No Tax charges affect subtotal."
+
+    if DEBUG:
+        print "Other charges returned:"
+        for key in other_charge_sum:
+             print "\tInvoice:\t" + str(key) + " Total charges:\t" + str(other_charge_sum[key])
 
     # Return the dictionary to the main program
     return other_charge_sum
