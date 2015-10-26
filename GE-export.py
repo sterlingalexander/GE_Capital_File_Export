@@ -250,6 +250,7 @@ cursor_non_latitude.execute(query2)
 # QUERY 3: RMA returns
 #   Query includes all SERIALIZED RMA returns that need to be credited
 #    * 09-22-2015 - Added exclusion to where clause for items with zero-dollar price
+#    * 10-05-2015 - Added missing 'order by' clause.  This prevents multiple headers from appearing per invoice
 
 cnxn3 = pyodbc.connect('DRIVER={SQL Server};SERVER=' + db_commerce_center_ip + ';DATABASE=' + db_commerce_center_name +
                        ';UID=' + db_commerce_center_UID + ';PWD=' + db_commerce_center_pwd)
@@ -310,6 +311,8 @@ query3 += '''
                 AND ihead.customer_id = ''' + "'" + ge_account_number + "'"
 if len(excluded_product_groups) > 0:
     query3 += " AND invl.product_group_id not in (" + str(excluded_product_groups).strip('[]') + ")"
+query3 += '''
+            order by ihead.invoice_no asc'''
 
 cursor_rma = cnxn3.cursor()
 cursor_rma.execute(query3)
@@ -318,6 +321,7 @@ cursor_rma.execute(query3)
 # QUERY 4: RMA returns with no serial numbers
 #   Query includes all NON-SERIALIZED RMA returns that need to be credited
 #    * 09-22-2015 - Added exclusion to where clause for items with zero-dollar price
+#    * 10-05-2015 - Added missing 'order by' clause.  This prevents multiple headers from appearing per invoice
 
 cnxn4 = pyodbc.connect('DRIVER={SQL Server};SERVER=' + db_commerce_center_ip + ';DATABASE=' + db_commerce_center_name +
                        ';UID=' + db_commerce_center_UID + ';PWD=' + db_commerce_center_pwd)
@@ -392,7 +396,9 @@ where x.serial_number is null
     AND iline.unit_price <> 0
     '''
 if len(excluded_product_groups) > 0:
-    query4 += " AND invl.product_group_id not in (" + str(excluded_product_groups).strip('[]') + ")"
+    query4 += "AND invl.product_group_id not in (" + str(excluded_product_groups).strip('[]') + ")"
+query4 += '''
+            order by ihead.invoice_no asc'''
 
 cursor_rma_non_serial = cnxn4.cursor()
 cursor_rma_non_serial.execute(query4)
@@ -437,7 +443,7 @@ def invoice_header(row, other_charges):
     IH_Line += row.floor_plan_id[:5].ljust(5) + " ".ljust(16) + row.Po_num.ljust(20) + \
         " ".ljust(10) + "0".ljust(11, '0') + " ".ljust(9)
     output_file.write(IH_Line + '\n')
-    if DEBUG == 1:
+    if DEBUG > 1:
         print IH_Line
 
 def address_info(row):
@@ -488,7 +494,7 @@ def address_info(row):
     AH04_Line = str(row.Dealer).ljust(13) + str(row.invoice_no).ljust(10) + "HAH04" + " ".ljust(30) + SOPT.ljust(62)
     output_file.write(AH04_Line + '\n')
 
-    if DEBUG == 1:
+    if DEBUG > 1:
         print SLDN_Line
         print SLDA_Line
         print SLDC_Line
@@ -525,7 +531,7 @@ def item_detail(row):
     AD08_Line = str(row.Dealer).ljust(13) + str(row.invoice_no).ljust(10) + "DAD08" + str(row.ItemID).ljust(92)
     output_file.write(AD08_Line + '\n')
 
-    if DEBUG == 1:
+    if DEBUG > 1:
         print ID1_Line
         print AD02_Line
         print AD08_Line
@@ -672,7 +678,7 @@ non_latitude_rows = cursor_non_latitude.fetchall()
 rma_non_serial = cursor_rma_non_serial.fetchall()
 other_charges = get_charges_to_exclude()
 
-if DEBUG >= 1:
+if DEBUG > 1:
     print str_batch_header
     print "RMA cursor length ====>                " + str(len(rma_rows))
     print "RMA without serial cursor length ====> " + str(len(rma_non_serial))
@@ -707,7 +713,7 @@ for row in rows:
         else:
             batch_total = batch_total + item_detail(row)
         num_to_print -= 1
-        if DEBUG == 10:
+        if DEBUG >= 10:
             print "item price:", str(row.Price), "\tQuantity:", str(row.Qty), "\t\trunning batch total: ", str(batch_total), \
                 row.ItemID, row.item_desc
 
@@ -726,7 +732,7 @@ if len(non_latitude_rows) > 0:
             batch_total = batch_total + item_detail(row)
         else:
             batch_total = batch_total + item_detail(row)
-        if DEBUG == 10:
+        if DEBUG >= 10:
             print "item price:", str(row.Price), "\tQuantity:", str(row.Qty), "\t\trunning batch total: ", str(batch_total), \
                 row.ItemID, row.item_desc
 
@@ -743,7 +749,7 @@ if len(rma_rows) > 0:
             batch_total = batch_total - item_detail(row)
         else:
             batch_total = batch_total - item_detail(row)
-        if DEBUG == 10:
+        if DEBUG >= 10:
             print "item price:", str(row.Price), "\tQuantity:", str(row.Qty), "\t\trunning batch total: ", \
                 str(batch_total), row.ItemID, row.item_desc
 
@@ -765,7 +771,7 @@ if len(rma_non_serial) > 0:
             else:
                 batch_total = batch_total - item_detail(row)
             num_to_print -= 1
-            if DEBUG == 10:
+            if DEBUG >= 10:
                 print "item price:", str(row.Price), "\tQuantity:", str(row.Qty), "\t\trunning batch total: ", \
                     str(batch_total), row.ItemID, row.item_desc
 
@@ -799,9 +805,9 @@ else:
         file_footer += ' '
     file_footer += cust_id.rjust(8) + date_time.rjust(23).ljust(63)
     output_file.write(file_footer + '\n')
-    if DEBUG == 1:
+    if DEBUG >= 1:
         print file_footer
-    if DEBUG > 0:
+    if DEBUG:
         print "Invoice Totals: ", invoice_total, "\t\tItem Totals: ", batch_total
 
 # Close the file so we can send it....
@@ -810,6 +816,15 @@ print "Export complete...."
 
 # Put the file in the temporary FTP location
 shutil.copy2(output_file_name, temp_path)
+
+if DEBUG:     # If we are debugging, skip the transfer
+    print "Transfer skipped due to debugging...archiving activity file...."
+    shutil.copy2(output_file_name, archive_path)
+    os.remove(temp_path + '/' + output_file_name)
+    os.remove(output_file_name)
+    print "Archive complete....exiting."
+    exit(0)
+
 
 # Replace forward slashes with back slashes for command line commands
 print "Starting file transfer...."
