@@ -8,6 +8,7 @@ import ConfigParser
 
 # Set to 1 or 10 to get extra output to the console
 DEBUG = 0
+EXCLUSION_LOG = ""
 
 # Check to see if we had a date passed in
 if len(sys.argv) > 1:
@@ -664,6 +665,110 @@ def get_charges_to_exclude():
     # Return the dictionary to the main program
     return other_charge_sum
 
+def log_exclusions(row):
+
+    ret = ""
+    ID1_Line = str(row.Dealer).ljust(13) + str(row.invoice_no).ljust(10) + "2".ljust(2)
+    # Test for NULL serial numbers
+    if row.SerialNumberID == None or row.SerialNumberID == "":
+        ID1_Line += "NULL-Serial".ljust(20)
+    else:
+        ID1_Line += str(row.SerialNumberID).ljust(20)
+        # Is this a RMA?
+    if row.is_rma != None:
+        ID1_Line += str(row.Price)[:(str(row.Price)).index('.') + 3].translate(None, '.').rjust(11, '0') + '-' + \
+            str(row.ItemID).split(' ')[0].ljust(4) + str(row.ItemID).split(' ')[1].ljust(60)
+    else:
+        ID1_Line += str(row.Price)[:(str(row.Price)).index('.') + 3].translate(None, '.').rjust(11, '0') + ' ' + \
+            str(row.ItemID).split(' ')[0].ljust(4) + str(row.ItemID).split(' ')[1].ljust(59)
+    ret += ID1_Line + '\n'
+
+    # Additional Detail AD02
+    AD02_Line = str(row.Dealer).ljust(13) + str(row.invoice_no).ljust(10) + "DAD02" + str(row.item_desc).ljust(92)
+    ret += AD02_Line + '\n'
+
+    # Additional Detail AD08
+    AD08_Line = str(row.Dealer).ljust(13) + str(row.invoice_no).ljust(10) + "DAD08" + str(row.ItemID).ljust(92)
+    ret += AD08_Line + '\n'
+
+    return ret
+
+#def check_invoices(qry, other_charges, exclusion_list):
+def check_invoices(qry, other_charges, invoice_dict,  exclusion_list, applied_oc):
+
+    # We have 4 invocations of this function, if the other charges have already been applied, we should
+    #   not apply them more than once.
+    #Create a dictionary with the sum of the invoice items
+    for row in qry:
+        if row.invoice_no in invoice_dict:
+            if len(row.SerialNumberID) > 1:
+                if row.SerialNumberID == "Null-Serial" and row.is_rma:
+                    # Non-Serialized RMA case
+                    #   No negative here because quantity is negative
+                    invoice_dict[row.invoice_no] = invoice_dict[row.invoice_no] + row.Price * row.Qty
+                elif row.is_rma:
+                    # Serialized RMA case
+                    #   Each will be on a separate line, no need to use quantity
+                    invoice_dict[row.invoice_no] = invoice_dict[row.invoice_no] - row.Price
+                else:
+                    invoice_dict[row.invoice_no] = invoice_dict[row.invoice_no] + row.Price
+            else:
+                # TODO:  Determine if dead code, maybe put debug statement in and monitor?
+                if row.is_rma:
+                    invoice_dict[row.invoice_no] = invoice_dict[row.invoice_no] + row.Price * row.Qty #* -1
+                else:
+                    invoice_dict[row.invoice_no] = invoice_dict[row.invoice_no] + row.Price * row.Qty
+        else:
+            if len(row.SerialNumberID) > 1:
+                if row.is_rma:
+                    invoice_dict[row.invoice_no] = row.Price * -1
+                else:
+                    invoice_dict[row.invoice_no] = row.Price
+            else:
+                if row.is_rma:
+                    invoice_dict[row.invoice_no] = row.Price * -1 * row.Qty
+                else:
+                    invoice_dict[row.invoice_no] = row.Price * row.Qty
+
+    # Handle other charges detected on the invoice
+    if other_charges:
+        for key in other_charges:
+            # Do not apply any other_charge to an invoice more than once, if we used it
+            if key in invoice_dict:
+                if key in applied_oc:
+                    continue
+                else:
+                    applied_oc.append(key)
+                    #invoice_dict[row.invoice_no] = invoice_dict[row.invoice_no] + other_charges[row.invoice_no]
+                    invoice_dict[key] = invoice_dict[key] + other_charges[key]
+
+
+def exclude_mismatches(qry, other_charges, invoice_dict, exclusion_list):
+
+    ret = ""
+    for row in qry:
+        if row.invoice_no in exclusion_list:
+            ret += log_exclusions(row)
+            continue
+        else:
+            if row.invoice_no in invoice_dict:
+                if row.Inv_Total != invoice_dict[row.invoice_no]:
+                    ret += "--> Adding invoice " + str(row.invoice_no) + " to the exclusion list\n"
+                    try:
+                        ret += "\tInvoice total: " + str(row.Inv_Total) + " \tRow total: " + \
+                            str(invoice_dict[row.invoice_no]) + \
+                            "\tOther charges total: " + str(other_charges[row.invoice_no]) + "\n"
+                    except KeyError:
+                        ret += "\tInvoice total: " + str(row.Inv_Total) + " \tRow total: " + \
+                            str(invoice_dict[row.invoice_no]) + "\tNo other charges\n"
+                    ret += "================================================\n"
+                    exclusion_list.append(row.invoice_no)
+                    ret += log_exclusions(row)
+    if DEBUG:
+        print ret
+    return ret
+
+
 # Main Program
 # Print BATCH HEADER RECORD
 
@@ -693,9 +798,29 @@ batch_total = 0             # accumulator for total of all sales
 debug_item_count = 0        # debug variable for item counting
 invoice_total = 0           # debug variable for totaling invoice amounts
 num_to_print = 1            # flag/counter for quantity printing
+exclusion_list = []         # list of any invoices to exclude due to detected inconsistencies
+invoice_dict = {}
+applied_oc = []
+
+# FOR NOW, SKIP EXCLUSIONS
+check_invoices(rows, other_charges, invoice_dict, exclusion_list, applied_oc)
+check_invoices(non_latitude_rows, other_charges, invoice_dict, exclusion_list, applied_oc)
+check_invoices(rma_rows, other_charges, invoice_dict, exclusion_list, applied_oc)
+check_invoices(rma_non_serial, other_charges, invoice_dict, exclusion_list, applied_oc)
+
+EXCLUSION_LOG += exclude_mismatches(rows, other_charges, invoice_dict, exclusion_list)
+EXCLUSION_LOG += exclude_mismatches(non_latitude_rows, other_charges, invoice_dict, exclusion_list)
+EXCLUSION_LOG += exclude_mismatches(rma_rows, other_charges, invoice_dict, exclusion_list)
+EXCLUSION_LOG += exclude_mismatches(rma_non_serial, other_charges, invoice_dict, exclusion_list)
+
+if DEBUG:
+    print exclusion_list
 
 # Latitude-shipped sales
 for row in rows:
+    # Skip any out of balance inovice so we don't send an invalid file
+    if row.invoice_no in exclusion_list:
+        continue
     # If the item is serialized, we only print one, otherwise we have to respect the quantity
     if len(row.SerialNumberID) > 1:
         num_to_print = 1
@@ -722,6 +847,9 @@ for row in rows:
 #  - Since the query does not pull one line per item, we use the quantity field when printing
 if len(non_latitude_rows) > 0:
     for row in non_latitude_rows:
+        # Skip any out of balance inovice so we don't send an invalid file
+        if row.invoice_no in exclusion_list:
+            continue
         # Check to see if we need a new invoice header record or if it is the same invoice
         if current != row.invoice_no:
             header_count += 1
@@ -738,7 +866,11 @@ if len(non_latitude_rows) > 0:
 
 # RMA Loop.  Since these are all returns we can switch to pure subtraction
 if len(rma_rows) > 0:
+
     for row in rma_rows:
+        # Skip any out of balance inovice so we don't send an invalid file
+        if row.invoice_no in exclusion_list:
+            continue
         # Check to see if we need a new invoice header record or if it is the same invoice
         if current != row.invoice_no:
             header_count += 1
@@ -758,6 +890,9 @@ if len(rma_rows) > 0:
 
 if len(rma_non_serial) > 0:
     for row in rma_non_serial:
+        # Skip any out of balance inovice so we don't send an invalid file
+        if row.invoice_no in exclusion_list:
+            continue
         num_to_print = abs(row.Qty)
         while num_to_print > 0:
             # Check to see if we need a new invoice header record or if it is the same invoice
@@ -813,6 +948,18 @@ else:
 # Close the file so we can send it....
 output_file.close()
 print "Export complete...."
+
+#TODO: Change this to a configurable email
+# Log any exclusions here
+if len(exclusion_list) > 0:
+    exclusions_file_name = "Exclusions_" + query_date
+    print "INVOICES EXCLUDED:  See the log file"
+    outstring = ', '.join(exclusion_list)
+    exclusions_file = open(exclusions_file_name, "w")
+    exclusions_file.write(EXCLUSION_LOG)
+    exclusions_file.close()
+    shutil.copy2(exclusions_file_name, archive_path)
+    os.remove(exclusions_file_name)
 
 # Put the file in the temporary FTP location
 shutil.copy2(output_file_name, temp_path)
