@@ -45,6 +45,10 @@ try:
     ftp_url = cfg.get("FTP", "ftp_url")
     excluded_product_groups = cfg.get("Exclusions", "product_groups").split(" ")
     win_scp_path = cfg.get("General", "win_scp_path")
+    email_server_ip = cfg.get("Email", "email_server_ip")
+    email_from_address = cfg.get("Email", "email_from_address")
+    email_to_addresses = cfg.get("Email", "email_to_addresses").split(" ")
+
 except:
     print "\n==========| Exception raised!!!! |=========="
     print "\tThere was an error parsing the configuration file."
@@ -425,6 +429,7 @@ output_file = open(output_file_name, "w")
 
 # Function Definitions
 
+
 def invoice_header(row, other_charges):
 
     if DEBUG and row.invoice_no in other_charges:
@@ -446,6 +451,7 @@ def invoice_header(row, other_charges):
     output_file.write(IH_Line + '\n')
     if DEBUG > 1:
         print IH_Line
+
 
 def address_info(row):
     # Name Record
@@ -505,18 +511,19 @@ def address_info(row):
         print AH03_Line
         print AH04_Line
 
+
 def item_detail(row):
     # Return row total for file checksum
     # Invoice Detail Record
 
     ID1_Line = str(row.Dealer).ljust(13) + str(row.invoice_no).ljust(10) + "2".ljust(2)
     # Test for NULL serial numbers
-    if row.SerialNumberID == None or row.SerialNumberID == "":
+    if row.SerialNumberID is None or row.SerialNumberID == "":
         ID1_Line += "NULL-Serial".ljust(20)
     else:
         ID1_Line += str(row.SerialNumberID).ljust(20)
         # Is this a RMA?
-    if row.is_rma != None:
+    if row.is_rma is not None:
         ID1_Line += str(row.Price)[:(str(row.Price)).index('.') + 3].translate(None, '.').rjust(11, '0') + '-' + \
             str(row.ItemID).split(' ')[0].ljust(4) + str(row.ItemID).split(' ')[1].ljust(60)
     else:
@@ -660,22 +667,23 @@ def get_charges_to_exclude():
     if DEBUG:
         print "Other charges returned:"
         for key in other_charge_sum:
-             print "\tInvoice:\t" + str(key) + " Total charges:\t" + str(other_charge_sum[key])
+            print "\tInvoice:\t" + str(key) + " Total charges:\t" + str(other_charge_sum[key])
 
     # Return the dictionary to the main program
     return other_charge_sum
+
 
 def log_exclusions(row):
 
     ret = ""
     ID1_Line = str(row.Dealer).ljust(13) + str(row.invoice_no).ljust(10) + "2".ljust(2)
     # Test for NULL serial numbers
-    if row.SerialNumberID == None or row.SerialNumberID == "":
+    if row.SerialNumberID is None or row.SerialNumberID == "":
         ID1_Line += "NULL-Serial".ljust(20)
     else:
         ID1_Line += str(row.SerialNumberID).ljust(20)
         # Is this a RMA?
-    if row.is_rma != None:
+    if row.is_rma is not None:
         ID1_Line += str(row.Price)[:(str(row.Price)).index('.') + 3].translate(None, '.').rjust(11, '0') + '-' + \
             str(row.ItemID).split(' ')[0].ljust(4) + str(row.ItemID).split(' ')[1].ljust(60)
     else:
@@ -693,7 +701,7 @@ def log_exclusions(row):
 
     return ret
 
-#def check_invoices(qry, other_charges, exclusion_list):
+
 def check_invoices(qry, other_charges, invoice_dict,  exclusion_list, applied_oc):
 
     # We have 4 invocations of this function, if the other charges have already been applied, we should
@@ -739,7 +747,6 @@ def check_invoices(qry, other_charges, invoice_dict,  exclusion_list, applied_oc
                     continue
                 else:
                     applied_oc.append(key)
-                    #invoice_dict[row.invoice_no] = invoice_dict[row.invoice_no] + other_charges[row.invoice_no]
                     invoice_dict[key] = invoice_dict[key] + other_charges[key]
 
 
@@ -762,12 +769,31 @@ def exclude_mismatches(qry, other_charges, invoice_dict, exclusion_list):
                         ret += "\tInvoice total: " + str(row.Inv_Total) + " \tRow total: " + \
                             str(invoice_dict[row.invoice_no]) + "\tNo other charges\n"
                     ret += "================================================\n"
+                    ret += "Lines from the excluded invoice below\n"
+                    ret += "================================================\n"
                     exclusion_list.append(row.invoice_no)
                     ret += log_exclusions(row)
     if DEBUG:
         print ret
     return ret
 
+
+# Send an email to report on batch status
+def send_email_report(log, exclusion_list):
+    import smtplib
+    from email.mime.text import MIMEText
+    if len(exclusion_list) > 0:
+        msg = MIMEText(log)
+        msg['Subject'] = "GE Batch Report: Invoice excluded from batch dated " + query_date
+    else:
+        msg = MIMEText(log + "Batch ran with with no exclusions detected")
+        msg['Subject'] = "GE Batch Report: No issues detected for batch dated " + query_date
+
+    msg['From'] = email_from_address
+    msg['To'] = ', '.join(map(str, email_to_addresses))
+    mail_server = smtplib.SMTP(email_server_ip)
+    mail_server.sendmail(email_from_address, email_to_addresses, msg.as_string())
+    mail_server.quit()
 
 # Main Program
 # Print BATCH HEADER RECORD
@@ -928,6 +954,7 @@ if not activity:
     shutil.copy2(output_file_name, archive_path)
     os.remove(output_file_name)
     print "Archive complete....exiting."
+    send_email_report("No activity detected, no file sent\n", exclusion_list)
     exit(0)
 else:
     # Print the file footer record
@@ -949,7 +976,6 @@ else:
 output_file.close()
 print "Export complete...."
 
-#TODO: Change this to a configurable email
 # Log any exclusions here
 if len(exclusion_list) > 0:
     exclusions_file_name = "Exclusions_" + query_date
@@ -965,13 +991,19 @@ if len(exclusion_list) > 0:
 shutil.copy2(output_file_name, temp_path)
 
 if DEBUG:     # If we are debugging, skip the transfer
+    DEBUG_LOG = "THIS EMAIL COMES FROM A DEBUGGING RUN OF THE PROGRAM\n"
+    DEBUG_LOG += "NO FILE WAS SENT FOR PROCESSING\n"
+    DEBUG_LOG += "=====================================================\n"
+    DEBUG_LOG += "Start of email\n"
+    DEBUG_LOG += "=====================================================\n"
+    DEBUG_LOG += EXCLUSION_LOG
+    send_email_report(DEBUG_LOG, exclusion_list)
     print "Transfer skipped due to debugging...archiving activity file...."
     shutil.copy2(output_file_name, archive_path)
     os.remove(temp_path + '/' + output_file_name)
     os.remove(output_file_name)
     print "Archive complete....exiting."
     exit(0)
-
 
 # Replace forward slashes with back slashes for command line commands
 print "Starting file transfer...."
@@ -980,10 +1012,12 @@ transfer_cmd = win_scp_path + ' /script=WinSCP-commands.cmd ' + \
     '\!Y-!M-!D-!T-log.txt' + ' /parameter ' + output_file_name + ' ' + temp_path + ' ' + ftp_username + ' ' + \
     ftp_password + ' ' + ftp_url
 
+#TODO: Create custom email in case FTP fails?
 if subprocess.call(transfer_cmd):
     print "An error occurred during FTP transfer.  This was logged in " + ftp_log_path
     exit(-1)
 else:
+    send_email_report(EXCLUSION_LOG, exclusion_list)
     print "Transfer successful...archiving activity file...."
     shutil.copy2(output_file_name, archive_path)
     os.remove(temp_path + '/' + output_file_name)
