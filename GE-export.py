@@ -8,6 +8,7 @@ import ConfigParser
 
 # Set to 1 or 10 to get extra output to the console
 DEBUG = 0
+ADJUST_LOG = ""
 EXCLUSION_LOG = ""
 
 # Check to see if we had a date passed in
@@ -113,7 +114,8 @@ query1 = '''
       iline.unit_price AS Price,
       iline.product_group_id AS Prod,
       iline.item_desc,
-      mail_to.name mail_name,
+      ihead.ship2_name mail_name,
+      --mail_to.name mail_name,
       mail_to.mail_address1 mail_addr1,
       mail_to.mail_address2 mail_addr2,
       mail_to.mail_city mail_city,
@@ -128,7 +130,7 @@ query1 = '''
       SOL.ItemID,
       SOL.PickQuantity AS Qty,
       SOL.LineNumber AS Ln,
-      COALESCE(SN.SerialNumberID,'') AS SerialNumberID
+      COALESCE(SN.SerialNumberID, NULL) AS SerialNumberID
 
     FROM SalesOrder SO
     INNER JOIN SalesOrderLine SOL ON SOL.SalesOrderID = SO.SalesOrderID
@@ -168,16 +170,39 @@ cursor.execute(query1)
 #                       invoice dates
 #    * 09-22-2015 - Added exclusion to where clause for items with zero-dollar price
 #    * 09-25-2015 - Adjusted document_line_serial join to account for re-ordered line numbers during substitutions
+#    * 01-14-2016 - Adjust query to handle edge case of invoice with no serialized items
+#    * 02-09-2016 - Adjust query to screen off less information (comment out lines in the query from temp table)
+#    * 02-19-2016 - Fix adjustment made on 02-09 to the WHERE clause for the temporary table, there are
+#                     two cases, both listed below:
+#                   -> Clause part 1 deals with serialized items
+#                   -> Clause part 2 deals with non-serialzed items, quantity must be respected for these lines
+#                   Some Data Definitions
+#                     -> line_no        -- document_line_serial.line_no
+#                     -> line_number    -- oe_pick_ticket_detail
+#                     -> oe_line_no     -- oe_pick_ticket_detail.oe_line_no (matches invoice_line.oe_line_number)
+#                     -> oe_line_number -- invoice_line.oe_line_number, matches above
+#
+#                   So, in this case, we have part 1, there will always be a document_no and a serial no.
+#                   For part 2, there will never be a document no and the last 3 numbers should match to
+#                     avoid duplicates creeping in.
+
 
 cnxn2 = pyodbc.connect('DRIVER={SQL Server};SERVER=' + db_latitude_ip + ';DATABASE=' + db_latitude_name + ';UID=' +
                       db_latitude_UID + ';PWD=' + db_latitude_pwd)
 query2 = '''
+  with x as (
+
     SELECT DISTINCT
       NULL as is_rma,
       'Transfer_or_DirectShip' as 'tracking_no',
       ihead.invoice_no,
       ihead.order_no,
       oept.pick_ticket_no,
+      dls.line_no,
+      oeptd.line_number,
+      oeptd.oe_line_no,
+      iline.oe_line_number,
+      dls.document_no,
       LTRIM(RTRIM(dls.serial_number)) as SerialNumberID,
       dls.document_line_serial_uid,
       dls.row_status,
@@ -202,7 +227,8 @@ query2 = '''
       ihead.ship2_city AS ship_city,
       ihead.ship2_state AS ship_state,
       ihead.ship2_postal_code AS ship_zip,
-      mail_to.name mail_name,
+      ihead.ship2_name mail_name,
+      --mail_to.name mail_name,
       mail_to.mail_address1 mail_addr1,
       mail_to.mail_address2 mail_addr2,
       mail_to.mail_city mail_city,
@@ -218,7 +244,7 @@ query2 = '''
     INNER JOIN ''' + db_commerce_center_name + '''.dbo.oe_pick_ticket oept ON oept.order_no = ihead.order_no
     INNER JOIN ''' + db_commerce_center_name + '''.dbo.oe_pick_ticket_detail oeptd ON oept.pick_ticket_no = oeptd.pick_ticket_no
         and CONVERT(varchar,oeptd.date_created,112) >= ''' + "'" + query_date + "'" + '''
-    inner join ''' + db_commerce_center_name + '''.dbo.document_line_serial dls on dls.document_no = oept.pick_ticket_no
+    left join ''' + db_commerce_center_name + '''.dbo.document_line_serial dls on dls.document_no = oept.pick_ticket_no
         and dls.line_no = oeptd.line_number and oeptd.oe_line_no = iline.oe_line_number '''
 if len(excluded_product_groups) > 0:
     query2 += '''
@@ -246,8 +272,21 @@ query2 += '''
 if len(excluded_product_groups) > 0:
     query2 += " AND invl.product_group_id not in (" + str(excluded_product_groups).strip('[]') + ")"
 query2 += '''
-                  ORDER BY ihead.invoice_no asc
-                    '''
+  )
+  select * from x
+    where (
+        x.line_no = x.line_number
+--        and x.line_no = x.oe_line_no
+--        and x.line_no = x.oe_line_number
+        ) OR
+        (
+        x.document_no is NULL
+        and x.line_number = x.oe_line_no
+        and x.line_number = x.oe_line_number
+        )
+--        AND x.line_no IS NOT NULL
+      ORDER BY x.invoice_no asc
+        '''
 
 cursor_non_latitude = cnxn2.cursor()
 cursor_non_latitude.execute(query2)
@@ -285,7 +324,8 @@ query3 = '''
                         oehdr.ship2_city 'ship_city',
                         oehdr.ship2_state 'ship_state',
                         oehdr.ship2_zip 'ship_zip',
-                        mail_to.name mail_name,
+                        ihead.ship2_name mail_name,
+                        --mail_to.name mail_name,
                         mail_to.mail_address1 mail_addr1,
                         mail_to.mail_address2 mail_addr2,
                         mail_to.mail_city mail_city,
@@ -373,7 +413,8 @@ select DISTINCT x.*,
         oehdr.ship2_city 'ship_city',
         oehdr.ship2_state 'ship_state',
         oehdr.ship2_zip 'ship_zip',
-        mail_to.name mail_name,
+        ihead.ship2_name mail_name,
+      --mail_to.name mail_name,
         mail_to.mail_address1 mail_addr1,
         mail_to.mail_address2 mail_addr2,
         mail_to.mail_city mail_city,
@@ -552,6 +593,9 @@ def item_detail(row):
 #
 def get_charges_to_exclude():
 
+    # Return any logging messages for the email to send
+    ret = ""
+
     cnxn5 = pyodbc.connect('DRIVER={SQL Server};SERVER=' + db_commerce_center_ip + ';DATABASE=' + db_commerce_center_name +
                            ';UID=' + db_commerce_center_UID + ';PWD=' + db_commerce_center_pwd)
     cnxn6 = pyodbc.connect('DRIVER={SQL Server};SERVER=' + db_commerce_center_ip + ';DATABASE=' + db_commerce_center_name +
@@ -634,43 +678,46 @@ def get_charges_to_exclude():
     # Since we are using a dictionary, we must either add a new key or lookup the key and add to the invoice sum
 
     if cursor.rowcount < 0:
-        print " ==> Adjusting for " + str(cursor.rowcount) + " other_charge detected on invoices"
+        ret += " ==> Adjusting for other charges detected on invoices\n"
         for row in cursor:
+            ret += "\tInvoice " + str(row.invoice_no) + " was adjusted.\n"
             if row.invoice_no in other_charge_sum:
                 other_charge_sum[row.invoice_no] += (row.unit_price * row.qty_shipped)
             else:
                 other_charge_sum[row.invoice_no] = (row.unit_price * row.qty_shipped)
     else:
-        print " --> No other_charge items affect subtotal"
+        ret += " --> No other charges items affect subtotal.\n"
 
     # Do the same for PPDADD freight
     if cursor2.rowcount < 0:
-        print " ==> Adjusting for " + str(cursor2.rowcount) + " PPDADD freight (or any other freight) found on invoices"
+        ret += " ==> Adjusting for PPDADD freight (or any other freight) found on invoices.\n"
         for row in cursor2:
+            ret += "\tInvoice " + str(row.invoice_no) + " was adjusted.\n"
             if row.invoice_no in other_charge_sum:
                 other_charge_sum[row.invoice_no] += row.freight_out
             else:
                 other_charge_sum[row.invoice_no] = row.freight_out
     else:
-        print " --> No Latitude shipping charges affect subtotal"
+        ret += " --> No Latitude shipping charges affect subtotal.\n"
 
     if cursor3.rowcount < 0:
-        print " ==> Adjusting for " + str(cursor3.rowcount) + " tax charges that were detected on invoices"
+        print " ==> Adjusting for tax charges that were detected on invoices.\n"
         for row in cursor3:
+            ret += "\tInvoice " + str(row.invoice_no) + " was adjusted.\n"
             if row.invoice_no in other_charge_sum:
                 other_charge_sum[row.invoice_no] += row.tax_amount
             else:
                 other_charge_sum[row.invoice_no] = row.tax_amount
     else:
-        print " --> No Tax charges affect subtotal."
+        ret += " --> No Tax charges affect subtotal.\n"
 
     if DEBUG:
         print "Other charges returned:"
         for key in other_charge_sum:
             print "\tInvoice:\t" + str(key) + " Total charges:\t" + str(other_charge_sum[key])
 
-    # Return the dictionary to the main program
-    return other_charge_sum
+    # Return the dictionary to the main program as well as the log, returned as a tuple to unpack
+    return other_charge_sum, ret
 
 
 def log_exclusions(row):
@@ -706,10 +753,12 @@ def check_invoices(qry, other_charges, invoice_dict,  exclusion_list, applied_oc
 
     # We have 4 invocations of this function, if the other charges have already been applied, we should
     #   not apply them more than once.
-    #Create a dictionary with the sum of the invoice items
+    # Create a dictionary with the sum of the invoice items
+    # --> 01-14-2016 - Change row.serialNumberID check from len() to 'is None'
     for row in qry:
         if row.invoice_no in invoice_dict:
-            if len(row.SerialNumberID) > 1:
+            # If we have already seen this invoice once before....
+            if row.SerialNumberID is not None:
                 if row.SerialNumberID == "Null-Serial" and row.is_rma:
                     # Non-Serialized RMA case
                     #   No negative here because quantity is negative
@@ -723,16 +772,20 @@ def check_invoices(qry, other_charges, invoice_dict,  exclusion_list, applied_oc
             else:
                 # TODO:  Determine if dead code, maybe put debug statement in and monitor?
                 if row.is_rma:
-                    invoice_dict[row.invoice_no] = invoice_dict[row.invoice_no] + row.Price * row.Qty #* -1
+                    invoice_dict[row.invoice_no] = invoice_dict[row.invoice_no] + row.Price * row.Qty  # * -1
                 else:
                     invoice_dict[row.invoice_no] = invoice_dict[row.invoice_no] + row.Price * row.Qty
+        # If we have not seen this invoice before, we need to do the initial add of it.
         else:
-            if len(row.SerialNumberID) > 1:
-                if row.is_rma:
+            if row.SerialNumberID is not None:
+                if row.is_rma and row.SerialNumberID == "Null-Serial":
+                    invoice_dict[row.invoice_no] = row.Price * row.Qty
+                elif row.is_rma:
                     invoice_dict[row.invoice_no] = row.Price * -1
                 else:
                     invoice_dict[row.invoice_no] = row.Price
             else:
+                # Probably now dead code due to change in above 'if' condition
                 if row.is_rma:
                     invoice_dict[row.invoice_no] = row.Price * -1 * row.Qty
                 else:
@@ -779,21 +832,37 @@ def exclude_mismatches(qry, other_charges, invoice_dict, exclusion_list):
 
 
 # Send an email to report on batch status
-def send_email_report(log, exclusion_list):
+def send_email_report(exclusion_log, adjustment_log, exclusion_list):
     import smtplib
     from email.mime.text import MIMEText
     if len(exclusion_list) > 0:
-        msg = MIMEText(log)
+        msg = MIMEText(exclusion_log + '\n\n' + adjustment_log)
         msg['Subject'] = "GE Batch Report: Invoice excluded from batch dated " + query_date
     else:
-        msg = MIMEText(log + "Batch ran with with no exclusions detected")
-        msg['Subject'] = "GE Batch Report: No issues detected for batch dated " + query_date
+        msg = MIMEText(exclusion_log + "Batch ran with with no exclusions detected\n\n" + adjustment_log)
+        msg['Subject'] = "GE Batch Report: No exclusions detected for batch dated " + query_date
 
     msg['From'] = email_from_address
     msg['To'] = ', '.join(map(str, email_to_addresses))
     mail_server = smtplib.SMTP(email_server_ip)
     mail_server.sendmail(email_from_address, email_to_addresses, msg.as_string())
     mail_server.quit()
+
+
+def print_non_serialized(invoice_no, batch_total):
+    if len(rma_non_serial) > 0:
+        for row in rma_non_serial:
+            # Skip any out of balance invoice so we don't send an invalid file
+            if row.invoice_no in exclusion_list or row.invoice_no != invoice_no:
+                continue
+            num_to_print = abs(row.Qty)
+            while num_to_print > 0:
+                batch_total = batch_total - item_detail(row)
+                num_to_print -= 1
+                if DEBUG >= 10:
+                    print "item price:", str(row.Price), "\tQuantity:", str(row.Qty), "\t\trunning batch total: ", \
+                        str(batch_total), row.ItemID, row.item_desc
+    return batch_total
 
 # Main Program
 # Print BATCH HEADER RECORD
@@ -807,7 +876,7 @@ rows = cursor.fetchall()
 rma_rows = cursor_rma.fetchall()
 non_latitude_rows = cursor_non_latitude.fetchall()
 rma_non_serial = cursor_rma_non_serial.fetchall()
-other_charges = get_charges_to_exclude()
+other_charges, ADJUST_LOG = get_charges_to_exclude()
 
 if DEBUG > 1:
     print str_batch_header
@@ -825,6 +894,7 @@ debug_item_count = 0        # debug variable for item counting
 invoice_total = 0           # debug variable for totaling invoice amounts
 num_to_print = 1            # flag/counter for quantity printing
 exclusion_list = []         # list of any invoices to exclude due to detected inconsistencies
+printed_list = []           # list of non-serialzed RMA items printed in the serialzed loop
 invoice_dict = {}
 applied_oc = []
 
@@ -840,6 +910,7 @@ EXCLUSION_LOG += exclude_mismatches(rma_rows, other_charges, invoice_dict, exclu
 EXCLUSION_LOG += exclude_mismatches(rma_non_serial, other_charges, invoice_dict, exclusion_list)
 
 if DEBUG:
+    print "========================================| Loop 1"
     print exclusion_list
 
 # Latitude-shipped sales
@@ -848,7 +919,7 @@ for row in rows:
     if row.invoice_no in exclusion_list:
         continue
     # If the item is serialized, we only print one, otherwise we have to respect the quantity
-    if len(row.SerialNumberID) > 1:
+    if row.SerialNumberID is not None:
         num_to_print = 1
     else:
         num_to_print = row.Qty
@@ -868,6 +939,8 @@ for row in rows:
             print "item price:", str(row.Price), "\tQuantity:", str(row.Qty), "\t\trunning batch total: ", str(batch_total), \
                 row.ItemID, row.item_desc
 
+if DEBUG:
+    print "========================================| Loop 2"
 
 # Non-Latitude sales
 #  - Since the query does not pull one line per item, we use the quantity field when printing
@@ -890,11 +963,19 @@ if len(non_latitude_rows) > 0:
             print "item price:", str(row.Price), "\tQuantity:", str(row.Qty), "\t\trunning batch total: ", str(batch_total), \
                 row.ItemID, row.item_desc
 
+if DEBUG:
+    print "========================================| Loop 3"
+
 # RMA Loop.  Since these are all returns we can switch to pure subtraction
+#  03-25-2016 - Added printing of all non-serialzed items to prevent duplicate invoice headers
+#             ---> Since RMAs can have both serialized and non-serialized items, it was possible to have
+#             --->   multiple invoice header records emitted in the export file.  Printing the
+#             --->   non-serialized items for each RMA with serialized items prevents this.
+#             --->   We still need the last loop for printing non-serialized only RMA's
 if len(rma_rows) > 0:
 
     for row in rma_rows:
-        # Skip any out of balance inovice so we don't send an invalid file
+        # Skip any out of balance invoice so we don't send an invalid file
         if row.invoice_no in exclusion_list:
             continue
         # Check to see if we need a new invoice header record or if it is the same invoice
@@ -905,19 +986,23 @@ if len(rma_rows) > 0:
             invoice_header(row, other_charges)
             address_info(row)
             batch_total = batch_total - item_detail(row)
+            batch_total = print_non_serialized(row.invoice_no, batch_total)
+            printed_list.append(row.invoice_no)
         else:
             batch_total = batch_total - item_detail(row)
         if DEBUG >= 10:
             print "item price:", str(row.Price), "\tQuantity:", str(row.Qty), "\t\trunning batch total: ", \
                 str(batch_total), row.ItemID, row.item_desc
 
+if DEBUG:
+    print "========================================| Loop 4"
+
 # RMA non-serialized
 #  - Since the query does not pull one line per item, we use the quantity field when printing
-
 if len(rma_non_serial) > 0:
     for row in rma_non_serial:
-        # Skip any out of balance inovice so we don't send an invalid file
-        if row.invoice_no in exclusion_list:
+        # Skip any out of balance invoice so we don't send an invalid file
+        if row.invoice_no in exclusion_list or row.invoice_no in printed_list:
             continue
         num_to_print = abs(row.Qty)
         while num_to_print > 0:
@@ -954,7 +1039,7 @@ if not activity:
     shutil.copy2(output_file_name, archive_path)
     os.remove(output_file_name)
     print "Archive complete....exiting."
-    send_email_report("No activity detected, no file sent\n", exclusion_list)
+    send_email_report("No activity detected, no file sent\n", ADJUST_LOG, exclusion_list)
     exit(0)
 else:
     # Print the file footer record
@@ -997,7 +1082,7 @@ if DEBUG:     # If we are debugging, skip the transfer
     DEBUG_LOG += "Start of email\n"
     DEBUG_LOG += "=====================================================\n"
     DEBUG_LOG += EXCLUSION_LOG
-    send_email_report(DEBUG_LOG, exclusion_list)
+    send_email_report(DEBUG_LOG, ADJUST_LOG, exclusion_list)
     print "Transfer skipped due to debugging...archiving activity file...."
     shutil.copy2(output_file_name, archive_path)
     os.remove(temp_path + '/' + output_file_name)
@@ -1017,7 +1102,7 @@ if subprocess.call(transfer_cmd):
     print "An error occurred during FTP transfer.  This was logged in " + ftp_log_path
     exit(-1)
 else:
-    send_email_report(EXCLUSION_LOG, exclusion_list)
+    send_email_report(EXCLUSION_LOG, ADJUST_LOG, exclusion_list)
     print "Transfer successful...archiving activity file...."
     shutil.copy2(output_file_name, archive_path)
     os.remove(temp_path + '/' + output_file_name)
