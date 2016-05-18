@@ -5,22 +5,61 @@ import subprocess
 import shutil
 import os
 import ConfigParser
+import argparse
 
-# Set to 1 or 10 to get extra output to the console
-DEBUG = 0
-ADJUST_LOG = ""
-EXCLUSION_LOG = ""
+#================================================
+# Define some globals.
+#================================================
+DEBUG = 0                         # Controls debug output, parsed as -v
+ADJUST_LOG = ""                   # Logs any invoice adjustments and appends them to status email
+EXCLUSION_LOG = ""                # Logs any invoice exclusions and appends them to status email
+
+#================================================
+# Setup positional and optional arguments
+#================================================
+
+parser = argparse.ArgumentParser()
+parser.add_argument("-d", "--date", help="Date to use for running the report and sending data to GE")
+parser.add_argument("-v", "--verbose", type=int, choices=[0, 1, 2],
+                    help="Print debugging output")
+parser.add_argument("-e", "--exclude", action="append")
+parser.add_argument("--no-ftp", nargs='?', const=1, type=int,
+                    help="Run the program but do not send the resulting file via FTP")
+args = parser.parse_args()
+
+
+#================================================
+# Parse arguments and set values
+#================================================
 
 # Check to see if we had a date passed in
-if len(sys.argv) > 1:
-    query_date = sys.argv[1]
+if args.date:
+    query_date = args.date
 else:
     query_date = time.strftime("%Y%m%d")
 
-if DEBUG:
-    print query_date
+# Set verbosity, there is room in case we need more than 2 levels
+if args.verbose > 1:
+    DEBUG = 10
+elif args.verbose == 1:
+    DEBUG = 1
 
+# Let us know this is a verbose run and what level we are using
+if DEBUG:
+    print "Debugging enabled, now running the following date: ", query_date
+    print "\tDebugging level is ", DEBUG
+
+# Are there invoices to exclude?
+if args.exclude:
+    print args.exclude
+
+if args.no_ftp:
+    print args.no_ftp
+
+
+#================================================
 # Parse the configuration file and set the config values
+#================================================
 cfg = ConfigParser.ConfigParser()
 cfg.read('config.ini')
 
@@ -83,9 +122,8 @@ if DEBUG:
     print "Excluded product groups:\t", excluded_product_groups
     print "WinSCP Path:\t\t\t\t", win_scp_path
 
-print "Running queries...."
+print "Running queries for date", query_date, "...."
 
-# exit(1)
 # QUERY 1: All sales that are shipped through Latitute
 #   Query includes Latitude database to ensure that if the Latitiude Gateway goes down we don't miss
 #     information not yet propagated to CommerceCenter
@@ -185,6 +223,8 @@ cursor.execute(query1)
 #                   So, in this case, we have part 1, there will always be a document_no and a serial no.
 #                   For part 2, there will never be a document no and the last 3 numbers should match to
 #                     avoid duplicates creeping in.
+#    * 5-21-2016 - Fix query to detect item that has a canceled line number on order entry, which
+#                    causes a line number mismatch.  Add extra OR statement to where clause
 
 
 cnxn2 = pyodbc.connect('DRIVER={SQL Server};SERVER=' + db_latitude_ip + ';DATABASE=' + db_latitude_name + ';UID=' +
@@ -281,8 +321,9 @@ query2 += '''
         ) OR
         (
         x.document_no is NULL
-        and x.line_number = x.oe_line_no
-        and x.line_number = x.oe_line_number
+        and (x.line_number = x.oe_line_no
+        and x.line_number = x.oe_line_number)
+        or (x.oe_line_no = x.oe_line_number)
         )
 --        AND x.line_no IS NOT NULL
       ORDER BY x.invoice_no asc
@@ -469,7 +510,6 @@ date_time = (time.strftime("%m%d%y")) + (time.strftime("%H%M%S"))
 output_file = open(output_file_name, "w")
 
 # Function Definitions
-
 
 def invoice_header(row, other_charges):
 
@@ -749,7 +789,7 @@ def log_exclusions(row):
     return ret
 
 
-def check_invoices(qry, other_charges, invoice_dict,  exclusion_list, applied_oc):
+def check_invoices(qry, other_charges, invoice_dict, applied_oc):
 
     # We have 4 invocations of this function, if the other charges have already been applied, we should
     #   not apply them more than once.
@@ -808,8 +848,16 @@ def exclude_mismatches(qry, other_charges, invoice_dict, exclusion_list):
     ret = ""
     for row in qry:
         if row.invoice_no in exclusion_list:
-            ret += log_exclusions(row)
-            continue
+            # We already printed the exclusion message when we added the manual exclusions to the
+            #  exclusion list, suppress the line details
+            if args.exclude:
+                if row.invoice_no in args.exclude:
+                    continue
+                else:
+                    ret += log_exclusions(row)
+                    continue
+            else:
+                ret += log_exclusions(row)
         else:
             if row.invoice_no in invoice_dict:
                 if row.Inv_Total != invoice_dict[row.invoice_no]:
@@ -898,11 +946,18 @@ printed_list = []           # list of non-serialzed RMA items printed in the ser
 invoice_dict = {}
 applied_oc = []
 
-# FOR NOW, SKIP EXCLUSIONS
-check_invoices(rows, other_charges, invoice_dict, exclusion_list, applied_oc)
-check_invoices(non_latitude_rows, other_charges, invoice_dict, exclusion_list, applied_oc)
-check_invoices(rma_rows, other_charges, invoice_dict, exclusion_list, applied_oc)
-check_invoices(rma_non_serial, other_charges, invoice_dict, exclusion_list, applied_oc)
+# Check for other charges that need to be controlled for
+check_invoices(rows, other_charges, invoice_dict, applied_oc)
+check_invoices(non_latitude_rows, other_charges, invoice_dict, applied_oc)
+check_invoices(rma_rows, other_charges, invoice_dict, applied_oc)
+check_invoices(rma_non_serial, other_charges, invoice_dict, applied_oc)
+
+# Populate exclusion_list
+if args.exclude:
+    for x in args.exclude:
+        print "Manually excluded the following invoices: " + str(x)
+        EXCLUSION_LOG += "NOTE:  Skipped invoice " + str(x) + " due to manual exclusion via command line\n"
+        exclusion_list.append(x)
 
 EXCLUSION_LOG += exclude_mismatches(rows, other_charges, invoice_dict, exclusion_list)
 EXCLUSION_LOG += exclude_mismatches(non_latitude_rows, other_charges, invoice_dict, exclusion_list)
@@ -1059,7 +1114,7 @@ else:
 
 # Close the file so we can send it....
 output_file.close()
-print "Export complete...."
+print "Export complete, checking if there were exclusions logged...."
 
 # Log any exclusions here
 if len(exclusion_list) > 0:
@@ -1071,19 +1126,21 @@ if len(exclusion_list) > 0:
     exclusions_file.close()
     shutil.copy2(exclusions_file_name, archive_path)
     os.remove(exclusions_file_name)
+else:
+    print "There were no exclusions logged, preparing to FTP the file...."
 
 # Put the file in the temporary FTP location
 shutil.copy2(output_file_name, temp_path)
 
-if DEBUG:     # If we are debugging, skip the transfer
-    DEBUG_LOG = "THIS EMAIL COMES FROM A DEBUGGING RUN OF THE PROGRAM\n"
+if DEBUG or args.no_ftp:     # If we are debugging, skip the transfer
+    DEBUG_LOG = "THIS EMAIL COMES FROM A DEBUGGING/TEST RUN OF THE PROGRAM\n"
     DEBUG_LOG += "NO FILE WAS SENT FOR PROCESSING\n"
-    DEBUG_LOG += "=====================================================\n"
+    DEBUG_LOG += "\n=====================================================\n"
     DEBUG_LOG += "Start of email\n"
     DEBUG_LOG += "=====================================================\n"
     DEBUG_LOG += EXCLUSION_LOG
     send_email_report(DEBUG_LOG, ADJUST_LOG, exclusion_list)
-    print "Transfer skipped due to debugging...archiving activity file...."
+    print "Transfer skipped due to debugging/testing...archiving activity file...."
     shutil.copy2(output_file_name, archive_path)
     os.remove(temp_path + '/' + output_file_name)
     os.remove(output_file_name)
