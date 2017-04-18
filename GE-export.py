@@ -1001,22 +1001,27 @@ if DEBUG:
 #  - Since the query does not pull one line per item, we use the quantity field when printing
 if len(non_latitude_rows) > 0:
     for row in non_latitude_rows:
-        # Skip any out of balance inovice so we don't send an invalid file
+        num_to_print = 1
+        # Skip any out of balance invoice so we don't send an invalid file
         if row.invoice_no in exclusion_list:
             continue
-        # Check to see if we need a new invoice header record or if it is the same invoice
-        if current != row.invoice_no:
-            header_count += 1
-            invoice_total += row.Inv_Total
-            current = row.invoice_no
-            invoice_header(row, other_charges)
-            address_info(row)
-            batch_total = batch_total + item_detail(row)
-        else:
-            batch_total = batch_total + item_detail(row)
-        if DEBUG >= 10:
-            print "item price:", str(row.Price), "\tQuantity:", str(row.Qty), "\t\trunning batch total: ", str(batch_total), \
-                row.ItemID, row.item_desc
+        if row.SerialNumberID is None:
+            num_to_print = abs(row.Qty)
+        while num_to_print > 0:
+            # Check to see if we need a new invoice header record or if it is the same invoice
+            if current != row.invoice_no:
+                header_count += 1
+                invoice_total += row.Inv_Total
+                current = row.invoice_no
+                invoice_header(row, other_charges)
+                address_info(row)
+                batch_total = batch_total + item_detail(row)
+            else:
+                batch_total = batch_total + item_detail(row)
+            num_to_print -= 1
+            if DEBUG >= 10:
+                print "item price:", str(row.Price), "\tQuantity:", str(row.Qty), "\t\trunning batch total: ", str(batch_total), \
+                    row.ItemID, row.item_desc
 
 if DEBUG:
     print "========================================| Loop 3"
